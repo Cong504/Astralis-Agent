@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from typing import Callable
 
 from data.events import utc_now
@@ -63,6 +64,10 @@ class DockerSandboxExecutor(SandboxExecutor):
     def __init__(self, docker_bin: str = "docker", runner: Runner | None = None):
         self.docker_bin = docker_bin
         self._run_cmd = runner or _default_runner
+        # 冷启动计时（2.8 测量协议）：create 发出 → 首条命令 stdout 返回。
+        # 每次 execute 覆盖；mock runner 下无意义。
+        self.last_timing: dict[str, float] = {}
+        self._create_issued_at: float | None = None
 
     # --- §3/§4 规则匹配（W2 真实实现，不再留桩） ---
     def check_command(self, request: ExecutionRequest) -> tuple[Verdict, str]:
@@ -81,6 +86,7 @@ class DockerSandboxExecutor(SandboxExecutor):
 
     # --- 容器生命周期 ---
     def create_container(self, request: ExecutionRequest) -> str:
+        self._create_issued_at = time.perf_counter()  # 协议起点：create 发出
         argv = [self.docker_bin, "create"]
         argv += request.limits.docker_args()  # 已含 --network none
         # W2.5 白名单：仅当显式配置 dns_allowlist 时覆盖网络模式（默认 none 不重复加）
@@ -120,6 +126,9 @@ class DockerSandboxExecutor(SandboxExecutor):
                 container_id=container_id, matched_rule="§2-timeout",
             )
         logs = self._run_cmd([self.docker_bin, "logs", container_id], None)
+        # 协议终点：首条命令 stdout 返回（不含其后的 stats 采集与容器销毁）
+        if self._create_issued_at is not None:
+            self.last_timing["create_to_stdout_sec"] = time.perf_counter() - self._create_issued_at
         # stats 在容器仍存在时采集（destroy 之前），峰值用于审计
         peak_mem, disk_written = self._collect_stats(container_id)
         exit_code = int((wait.stdout.strip() or "-1").splitlines()[-1])

@@ -140,6 +140,7 @@ class RouteResult:
     fallback: bool
     attempts: list[str]
     usage: TokenUsage = field(default_factory=TokenUsage)
+    normalization: dict[str, Any] = field(default_factory=dict)
 
 
 class ModelRouter:

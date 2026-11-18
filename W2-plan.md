@@ -14,6 +14,19 @@
 - W1 定的五段管道接口与沙箱/工具接口签名本周只填空、不改签名（ADR-0001 约束）。
 - 模型全走云端；本地 14B 不参与（ADR-0003，`deploy_14b.sh` 已 DEFERRED）。
 
+### 验收原则：I/O / 编码 / 权限 / 生命周期必须真容器实测
+
+> 人类固化（2026-11-18）：D3 的 GBK 解码崩溃与挂载卷 uid 权限错误，都是在真容器里才暴露、mock 全绿照样漏掉的真 bug。
+
+1. **适用范围**：以下四类事项**不得仅凭 mock 签字**，必须在真实镜像 + 真实容器上实测通过才可关闭：
+   - **I/O**：文件读写、stdout/stderr 采集、挂载卷落地与读回；
+   - **编码**：跨宿主/容器文本解码（Windows GBK vs 容器内 UTF-8）；
+   - **权限**：非 root uid、tmpfs/挂载卷属主、只读路径写失败；
+   - **生命周期**：容器创建→执行→销毁、超时 kill、OOM 终止、容器不复用。
+2. **可 mock 关闭的例外**：纯逻辑（正则匹配、白名单匹配、参数构造、状态机流转）可 mock 验证；但凡涉及上述四类，mock 只作开发期快速反馈，验收看实测。
+3. **落地方式**：统一进「真实镜像验收清单」R1–R10；每条关闭须附实测命令与原始输出，不允许「mock 绿即打勾」。
+4. **价值声明**：这条原则以两次真 bug 为证——它们不是设计错、也不是逻辑错，而是只有真实运行环境才存在的集成错。
+
 分工：你负责收敛与验收签字；开发 Agent 按本作业单实现。
 
 ---
@@ -82,15 +95,24 @@
 - 端到端中发现并修复两个真 bug：① Windows GBK 默认编码导致 docker CLI 输出 UTF-8 解码崩溃（`_default_runner` 改 `encoding=utf-8, errors=replace`）；② Windows Docker Desktop 挂载卷 uid 映射导致宿主读文件 PermissionError（报告验证改为「容器内读回自证」，宿主读取标 N/A 不作判据）。
 - 报告落地位置：宿主输出挂载 `/output/report.md`（容器内可见并经容器读回验证）；宿主直读在 Windows 挂载下 N/A。
 
-### 冷启动基线（供 2.8 定预算上界，2026-11-18 实测）
+### 冷启动压测结果（2.8，协议化，2026-11-18）
 
 | 指标 | 实测值 | 说明 |
 |---|---|---|
-| create（docker create） | 0.173s | 新建一次性容器 |
-| create → 首条命令返回 | 0.704s | 冷启动主指标 |
-| 端到端（含计划/确认/2 步执行） | 1.80s | 全链路 |
+| 预算上界 N | 1.0s | 人类拍板（原基线 0.704s 留 42% 余量） |
+| warm p95 | **0.7002s** | 20 样本，最近秩法；PASS（≤ 1.0s） |
+| warm min / max / 中位数 | 0.5781 / 0.7841 / 0.6290s | 原始样本 20 条见下 |
+| create → 首命令返回（S2 单点） | 0.704s | 早前 D3 基线，与压测一致 |
+| cold-after-pull | 未测 | 本机镜像已缓存无法复现首次拉取，留新环境；协议已支持 `--cold-after-pull` |
 
-> 2.8 预算上界待你据上述基线拍板；当前仅记录基线，不预设 N 值。
+**原始样本（warm, 秒）**：
+```
+[0.7841, 0.6676, 0.6457, 0.6190, 0.6043, 0.6426, 0.6065, 0.6161, 0.5981, 0.6579,
+ 0.6203, 0.6377, 0.7002, 0.6627, 0.6109, 0.6074, 0.5781, 0.6380, 0.6493, 0.6107]
+```
+落盘：`logs/bench_cold_start_warm.json`（含 mode/image_cached/protocol/p95/median/min/max/原始样本）。
+
+> 测量协议（钉死在 `scripts/bench_cold_start.py`）：① create 发出→首条命令 stdout 返回（不含 stats/销毁）；② 20 样本取 p95，不报均值；③ warm/cold 分离并标注是否首次拉镜像；④ 原始样本落盘。以此保证 N=1.0s 可信。
 
 ---
 
@@ -144,13 +166,15 @@
 
 ## 3. 本周硬结论（必须出书面）
 
-| 编号 | 假设 | 测试方式 | 成功信号 | 失败动作 |
+| 编号 | 假设 | 测试方式 | 成功信号 | 实测结论（2026-11-18） |
 |---|---|---|---|---|
-| A2 | 五段管道接口能覆盖 W2 真执行 | 填 execute 段不改接口签名 | 桩→真执行无接口改动 | 本周内调整接口，不留到 W3 |
-| A3 | MCP Stdio 能承载工具接入 | echo 握手一次进程间调用 | 完成 initialize→call 往返 | 回退自定义插件接口 → 出 ADR |
-| A4 | Docker 新建容器开销可接受 | 20 次冷启动采样 | 平均 < 2s | 预热镜像 / 精简基础镜像 → 出 ADR |
+| A2 | 五段管道接口能覆盖 W2 真执行 | 填 execute 段不改接口签名 | 桩→真执行无接口改动 | **PASS**：`SandboxExecuteStage` 替换桩段，签名未改；2.8 压测 20 条样本全 ALLOWED，链路未中断 |
+| A3 | MCP Stdio 能承载工具接入 | echo 握手一次进程间调用 | 完成 initialize→call 往返 | **PASS**：`scripts/verify_a3_stdio.py` 完成 initialize→tools/list(5)→tools/call 回显，0.088s；无需回退 |
+| A4 | Docker 新建容器开销可接受 | 协议化压测取 p95 | warm p95 ≤ 1.0s（人类拍板 N） | **PASS**：warm p95=0.7002s ≤ 1.0s（20 样本，原始样本见 `logs/bench_cold_start_warm.json`）；cold-after-pull 本机镜像已缓存无法复现，留新环境补 |
 
-> 注：原 A1（本地 14B 合法率）已按 ADR-0003 取消；云端 A1'（DeepSeek ≥8/10 合法、p95<30s）待你注入 Key 后在 W1/W2 边界实测，当前无 Key 只能跑 stub。
+> A4 测量协议（钉死，见 `scripts/bench_cold_start.py`）：create 发出→首条命令 stdout 返回；多次取 p95 不报均值；warm/cold 分离并标注首次拉镜像；原始样本落盘 `logs/bench_cold_start_*.json`。
+
+> 原 A1（本地 14B 合法率）按 ADR-0003 取消。云端 **A1' 实测**（2026-11-18，DeepSeek Key 已注入）：改进 prompt 列明工具白名单后，Friday 演示任务 `agent run --real` 返回合规计划（dir_scan+report_write），归一化报告 `raw_valid=true, rewrites=[]`；usage prompt=241/completion=112。此前未列白名单时观察到 `step_id` 数字型、`tool=filesystem_scan/user_input/none` 等自由输出——已在 Model 层加归一化兜底（未知 tool 安全降级为 log_record）并记录改写。10 次合法率的完整统计待补测，本轮为单点正面证据。
 
 ---
 
@@ -162,9 +186,10 @@
 - [x] 2.3 资源参数生效 + 超时真终止 + OOM 记录（R7/R8/R9 全部实测过）
 - [x] 2.4 只读挂载 + tmpfs 可写限额（R4/R5 实测过）；路径穿越拦截（mock 过）
 - [x] 2.5 默认断网 + 白名单匹配逻辑（`check_network_target` 纯 mock 关闭）；R10 真实出网进 backlog
-- [x] 2.6 五个工具实现 + mock 派发测试（R6 容器内真执行已过）；A3 Stdio 握手待 D4
+- [x] 2.6 五个工具实现 + mock 派发测试（R6 容器内真执行已过）；A3 Stdio 握手 PASS
 - [x] 2.7 S2 场景真跑通（PASS），报告落地，状态机完整，日志含每步 verdict/stdout
-- [ ] 2.8 冷启动预算上界待人类拍板（基线已测：create 0.173s / create→首命令 0.704s / E2E 1.80s）；A2/A3/A4 待 D4–D5
+- [x] 2.7′ **CLI 真执行接线 PASS**：`agent run --real` 走完整链路，模型 backend=deepseek（真云端，非 stub）、执行=真沙箱、落库真扫描结果（task-2bb067de，status=DONE）
+- [x] 2.8 冷启动压测 PASS：N=1.0s（人类拍板），warm p95=0.7002s ≤ 1.0s；协议钉死、原始样本落盘；A2/A3/A4 全部书面结论
 
 ### Backlog（W2 产生，不进本周验收）
 

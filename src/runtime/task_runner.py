@@ -47,10 +47,19 @@ class RuntimeUI:
 
 
 PLANNING_PROMPT = (
-    "你是任务规划器。只输出 JSON，字段为 task_id/goal/steps，"
-    "steps 每项含 step_id/action/tool/args/risk_level，"
-    "risk_level 取 low|medium|high，high 时必须有 requires_confirm=true。\n"
-    "task_id: {task_id}\n任务: {raw_input}"
+    "你是任务规划器。只输出 JSON，不要输出解释文字。"
+    "顶层字段：task_id(字符串)/goal(字符串)/steps(数组)。"
+    "steps 每项必须且只能含：step_id(字符串,格式 step-1)/action(字符串)/"
+    "tool(字符串)/args(对象)/risk_level(字符串,取值 low|medium|high)。"
+    "tool 必须严格取自以下白名单之一，不得发明新名字："
+    "dir_scan(参数 path)、file_read(参数 path)、script_run(参数 script)、"
+    "report_write(参数 target/content)、log_record(参数 event)。"
+    "目录扫描任务用 dir_scan 加 path=/workspace；生成报告用 report_write 加 "
+    "target=/output/report.md 与 content(可用 __STEP1__ 引用前步结果，"
+    "实际写为双花括号包裹 step-1.stdout)。"
+    "risk_level=high 时必须额外含 requires_confirm=true。"
+    "禁止输出 type 等额外字段。\n"
+    "TASK_ID_PLACEHOLDER\n任务: RAW_INPUT_PLACEHOLDER"
 )
 
 _STEP_REF = re.compile(r"\{\{\s*step-([0-9]+)\.stdout\s*\}\}")
@@ -108,7 +117,9 @@ def run_task(
         events.append(task_id, "PLANNING", {})
         db.update_status(task_id, "PLANNING", now())
 
-        prompt = PLANNING_PROMPT.format(task_id=task_id, raw_input=raw_input)
+        prompt = (PLANNING_PROMPT
+                  .replace("TASK_ID_PLACEHOLDER", task_id)
+                  .replace("RAW_INPUT_PLACEHOLDER", raw_input))
         ui.progress_start()
         try:
             plan, route = generate_plan_with_retry(router, prompt)
@@ -132,7 +143,9 @@ def run_task(
         db.save_plan(task_id, plan["goal"], plan, now())
         db.log_action(
             task_id, "model_call", "OK", now(),
-            tool=route.backend, result={"usage": usage_snap, "fallback": route.fallback},
+            tool=route.backend,
+            result={"usage": usage_snap, "fallback": route.fallback,
+                    "normalization": getattr(route, "normalization", {})},
         )
         ui.show_plan(plan)
         events.append(task_id, "AWAIT_CONFIRM", {"backend": route.backend, "fallback": route.fallback})

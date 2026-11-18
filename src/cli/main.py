@@ -19,8 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from data.db import TaskLogger  # noqa: E402
 from data.events import EventLog  # noqa: E402
-from model.router import ModelRouter  # noqa: E402
+from model.router import ModelRouter, build_cloud_router, build_stub_router  # noqa: E402
 from runtime.task_runner import RuntimeUI, run_task as runtime_run_task  # noqa: E402
+from sandbox.docker_executor import DockerSandboxExecutor  # noqa: E402
+from sandbox.executor import MountPolicy  # noqa: E402
+from tools.builtin import BuiltinTools  # noqa: E402
 
 
 def render_plan(plan: dict[str, Any]) -> str:
@@ -32,6 +35,16 @@ def render_plan(plan: dict[str, Any]) -> str:
             f"(tool={step['tool']}, risk={step['risk_level']}){confirm}"
         )
     return "\n".join(lines)
+
+
+def _format_step(intent: dict[str, Any]) -> str:
+    """区分 W1 桩与 W2 真执行的步骤展示。"""
+    if intent.get("stub", True):
+        return f"  [W1 桩] 本应执行: {intent.get('tool')} {intent.get('args')} (未真跑)"
+    out = (intent.get("output") or {})
+    snippet = str(out.get("stdout", "")).strip().replace("\n", " ")[:80]
+    return (f"  [真执行] tool={intent.get('tool')} verdict={intent.get('verdict')} "
+            f"exit={out.get('exit_code')} stdout='{snippet}'")
 
 
 class ProgressTicker:
@@ -76,9 +89,7 @@ def build_cli_ui(stdin: TextIO, stdout: TextIO, confirm: bool, interval: float) 
         ask_confirm=ask_confirm,
         progress_start=ticker.start,
         progress_stop=ticker.stop,
-        show_intent=lambda intent: print(
-            f"  [W1 桩] 本应执行: {intent['tool']} {intent['args']} (未真跑)", file=stdout,
-        ),
+        show_intent=lambda intent: print(_format_step(intent), file=stdout),
         alert=lambda msg: print(f"[告警] {msg}", file=stdout, flush=True),
         info=lambda msg: print(msg, file=stdout),
     )
@@ -100,10 +111,34 @@ def run_task(
     confirm: bool = True,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
+    real: bool = False,
+    workspace: str | None = None,
+    output: str | None = None,
 ) -> str:
-    """CLI 入口：构造 Interface 回调，委托 Runtime 执行。返回 task_id。"""
+    """CLI 入口：构造 Interface 回调，委托 Runtime 执行。返回 task_id。
+
+    real=True 时接真沙箱（五段管道 execute 段换 SandboxExecuteStage），
+    模型路由用 build_cloud_router（有 Key 走真云端，无 Key 退 stub 并标注）。
+    """
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
+    if router is None:
+        router = build_cloud_router() if real else build_stub_router()
+    backend_name = router.primary.name
+
+    dispatcher = None
+    if real:
+        mounts = MountPolicy(
+            workspace_src=str(Path(workspace).resolve()) if workspace else "",
+            output_src=str(Path(output).resolve()) if output else "",
+        )
+        mounts.validate()
+        tools = BuiltinTools(DockerSandboxExecutor(), task_id="cli", mounts=mounts)
+        dispatcher = tools.call
+
+    print(f"[后端] 模型={backend_name}（{'真实云端' if backend_name != 'stub' else 'stub 桩：无 Key'}）"
+          f" | 执行={'真沙箱' if real else '桩（未真跑）'}", file=stdout)
+
     ui = build_cli_ui(stdin, stdout, confirm, _progress_interval())
     return runtime_run_task(
         raw_input,
@@ -112,6 +147,7 @@ def run_task(
         events=EventLog(events_path) if events_path else None,
         ui=ui,
         own_db=True,
+        dispatcher=dispatcher,
     )
 
 
@@ -139,16 +175,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent", description="本地 Agent 底盘 v0.1 CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    run_p = sub.add_parser("run", help="运行一个任务（W1 不真跑）")
+    run_p = sub.add_parser("run", help="运行一个任务")
     run_p.add_argument("task", help="任务自然语言描述")
     run_p.add_argument("--no-confirm", action="store_true", help="跳过确认（仅冒烟测试用）")
+    run_p.add_argument("--real", action="store_true", help="接真沙箱执行（W2）；默认 W1 桩不真跑")
+    run_p.add_argument("--workspace", help="宿主输入目录（真执行时只读挂到 /workspace）")
+    run_p.add_argument("--output", help="宿主输出目录（真执行时确认后可写挂到 /output）")
 
     log_p = sub.add_parser("log", help="按 task_id 回放完整轨迹")
     log_p.add_argument("task_id")
 
     args = parser.parse_args(argv)
     if args.cmd == "run":
-        run_task(args.task, confirm=not args.no_confirm)
+        run_task(args.task, confirm=not args.no_confirm, real=args.real,
+                 workspace=args.workspace, output=args.output)
     elif args.cmd == "log":
         replay_task(args.task_id)
     return 0
