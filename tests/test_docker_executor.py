@@ -94,6 +94,7 @@ def test_execute_creates_runs_and_destroys():
         "start": _proc(),
         "wait": _proc(out="0\n"),
         "logs": _proc(out="ok\n"),
+        "stats": _proc(out="12MiB / 2GiB\t3MB / 0B\n"),
         "rm": _proc(),
     }
 
@@ -105,8 +106,9 @@ def test_execute_creates_runs_and_destroys():
     result = ex.execute(REQ)
     assert result.verdict is Verdict.ALLOWED
     assert result.exit_code == 0
+    assert result.peak_memory_mb == 12  # stats 采集并入 run
     cmds = [c[1] for c in calls]
-    assert cmds == ["create", "start", "wait", "logs", "rm"]  # 结束即销毁
+    assert cmds == ["create", "start", "wait", "logs", "stats", "rm"]  # 结束即销毁
 
 
 def test_timeout_kills_container():

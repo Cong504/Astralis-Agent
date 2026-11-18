@@ -23,7 +23,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 class Verdict(str, Enum):
@@ -81,14 +83,30 @@ class MountPolicy:
     network_mode: str = "none"         # §6 默认全断；白名单需显式配置（W2.5）
     dns_allowlist: tuple[str, ...] = ()
 
+    # 禁止作为挂载源的宿主路径（SANDBOX_RULES.md §5）
+    FORBIDDEN_HOST_SOURCES = ("/", "/home", "/etc", "/boot", "/sys", "/proc", "/dev")
+
+    def validate(self) -> None:
+        """构建容器前的挂载合法性校验（W2.4，纯逻辑可 mock 验证）。"""
+        for src in (self.workspace_src, self.output_src):
+            if not src:
+                continue
+            if any(p == src or src.startswith(p + "/") for p in self.FORBIDDEN_HOST_SOURCES):
+                raise ValueError(f"SANDBOX_RULES.md §5 禁止挂载宿主敏感路径: {src}")
+            if ".." in Path(src).parts:
+                raise ValueError(f"SANDBOX_RULES.md §5 路径穿越: {src}")
+        if self.scratch_size_mb > 500:
+            raise ValueError("SANDBOX_RULES.md §2 临时目录容量上限 500MB")
+
     def docker_mounts(self) -> list[tuple[str, str, str]]:
-        """返回 (src, dst, mode) 列表；不挂载宿主 / /home / NAS 根目录。"""
+        """返回 (src, dst, mode) 列表；调用前须先 validate() 通过。"""
+        self.validate()
         mounts: list[tuple[str, str, str]] = []
         if self.workspace_src:
-            mounts.append((self.workspace_src, self.workspace_dst, "ro"))
+            mounts.append((self.workspace_src, self.workspace_dst, "ro"))  # 只读
         if self.output_src:
-            mounts.append((self.output_src, self.output_dst, "rw"))
-        # scratch 由实现用 tmpfs 创建，需在 W2.4 验证写只读路径必然失败
+            mounts.append((self.output_src, self.output_dst, "rw"))        # 用户确认后可写
+        # scratch 由执行器用 tmpfs 挂载（rw,size≤500m），任务结束即销毁
         return mounts
 
 
@@ -249,3 +267,25 @@ class SandboxExecutor:
             return self.run(container_id, request)
         finally:
             self.destroy(container_id)  # 任何路径都销毁，不复用
+
+
+def check_network_target(target: str, allowlist: tuple[str, ...]) -> tuple[bool, str]:
+    """W2.5 网络白名单匹配（纯逻辑，可 mock 验证，无需真实网络）。
+
+    SANDBOX_RULES.md §6：默认全断；白名单逐域名，只允许出站 443。
+    返回 (allowed, reason)。
+    """
+    if not allowlist:
+        return False, "network=none（默认全断）"
+    parsed = urlparse(target if "://" in target else f"https://{target}")
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or 443
+    if not host:
+        return False, "无法解析目标域名"
+    if port != 443:
+        return False, f"仅允许出站 443，目标端口={port}"
+    for entry in allowlist:
+        allowed_host = entry.lower().lstrip(".")
+        if host == allowed_host or host.endswith("." + allowed_host):
+            return True, f"命中白名单 {entry}"
+    return False, f"域名 {host} 不在白名单"

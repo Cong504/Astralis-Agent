@@ -32,6 +32,32 @@ def _default_runner(argv: list[str], timeout: float | None) -> subprocess.Comple
     )
 
 
+def _parse_size_mb(value: str) -> int:
+    """解析 docker stats 的 MemUsage 形如 '12.3MiB / 2GiB'，取已用部分转 MB。"""
+    used = value.split("/")[0].strip()
+    multipliers = {"KiB": 1 / 1024, "MiB": 1, "GiB": 1024, "B": 1 / 1048576}
+    for unit, factor in multipliers.items():
+        if used.endswith(unit):
+            try:
+                return int(float(used[:-len(unit)].strip()) * factor)
+            except ValueError:
+                return 0
+    return 0
+
+
+def _parse_block_io_written_mb(value: str) -> int:
+    """解析 BlockIO 形如 '1.2MB / 0B'，取写入部分（斜杠右侧）转 MB。"""
+    written = value.split("/")[1].strip() if "/" in value else "0B"
+    multipliers = {"kB": 1 / 1000, "MB": 1, "GB": 1000, "B": 1 / 1000000}
+    for unit, factor in multipliers.items():
+        if written.endswith(unit):
+            try:
+                return int(float(written[:-len(unit)].strip()) * factor)
+            except ValueError:
+                return 0
+    return 0
+
+
 class DockerSandboxExecutor(SandboxExecutor):
     def __init__(self, docker_bin: str = "docker", runner: Runner | None = None):
         self.docker_bin = docker_bin
@@ -55,11 +81,16 @@ class DockerSandboxExecutor(SandboxExecutor):
     # --- 容器生命周期 ---
     def create_container(self, request: ExecutionRequest) -> str:
         argv = [self.docker_bin, "create"]
-        argv += request.limits.docker_args()
-        argv += ["--network", request.mounts.network_mode]
+        argv += request.limits.docker_args()  # 已含 --network none
+        # W2.5 白名单：仅当显式配置 dns_allowlist 时覆盖网络模式（默认 none 不重复加）
+        if request.mounts.dns_allowlist:
+            argv += ["--network", request.mounts.network_mode]
         for src, dst, mode in request.mounts.docker_mounts():
             argv += ["-v", f"{src}:{dst}:{mode}"]
-        argv += ["--tmpfs", f"{request.mounts.scratch_dst}:rw,size={request.mounts.scratch_size_mb}m"]
+        # tmpfs 默认属主 root，须显式给 uid/gid 才能被非 root 用户写入（真实镜像验收发现）
+        argv += ["--tmpfs",
+                 f"{request.mounts.scratch_dst}:rw,size={request.mounts.scratch_size_mb}m,"
+                 f"uid={request.limits.non_root_uid},gid={request.limits.non_root_uid}"]
         argv += [request.image, "/bin/bash", "-lc", request.command]
         proc = self._run_cmd(argv, None)
         if proc.returncode != 0:
@@ -88,18 +119,35 @@ class DockerSandboxExecutor(SandboxExecutor):
                 container_id=container_id, matched_rule="§2-timeout",
             )
         logs = self._run_cmd([self.docker_bin, "logs", container_id], None)
+        # stats 在容器仍存在时采集（destroy 之前），峰值用于审计
+        peak_mem, disk_written = self._collect_stats(container_id)
         exit_code = int((wait.stdout.strip() or "-1").splitlines()[-1])
         verdict = Verdict.OOM_KILLED if exit_code == 137 else Verdict.ALLOWED
         return ExecutionResult(
             task_id=request.task_id, step_id=request.step_id, timestamp=utc_now(),
             command=request.command, verdict=verdict, container_id=container_id,
             exit_code=exit_code, stdout=logs.stdout, stderr=logs.stderr,
+            peak_memory_mb=peak_mem, disk_written_mb=disk_written,
             user_confirmed=request.user_confirmed,
         )
 
+    def _collect_stats(self, container_id: str) -> tuple[int, int]:
+        """W2.3：docker stats --no-stream 采集内存峰值与磁盘写入量。"""
+        proc = self._run_cmd(
+            [self.docker_bin, "stats", "--no-stream", "--format",
+             "{{.MemUsage}}\t{{.BlockIO}}", container_id],
+            None,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return 0, 0
+        parts = proc.stdout.strip().splitlines()[0].split("\t")
+        mem_mb = _parse_size_mb(parts[0]) if len(parts) > 0 else 0
+        disk_mb = _parse_block_io_written_mb(parts[1]) if len(parts) > 1 else 0
+        return mem_mb, disk_mb
+
     def collect(self, container_id: str) -> ExecutionResult:
-        # D1 骨架：资源峰值采集留 W2.3 接入 docker stats；此处只返回占位字段。
-        raise NotImplementedError("W2.3 实现：docker stats 采集内存/磁盘峰值")
+        """接口保留：采集资源峰值。实际采集已在 run() 中于销毁前完成。"""
+        raise NotImplementedError("资源采集已并入 run() 的 _collect_stats；本方法保留接口兼容")
 
     def destroy(self, container_id: str) -> None:
         self._run_cmd([self.docker_bin, "rm", "-f", container_id], None)

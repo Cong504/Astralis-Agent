@@ -47,11 +47,32 @@
 - 2.1 增加「容器内执行 `pip install requests` 返回 DENIED_BY_RULE §3.5」。
 - 2.4 增加「`python -c 'import pdfplumber'` 在沙箱内失败（证明无预装额外库）」。
 
-### D1 环境阻碍记录（2026-11-18）
+### 镜像获取记录（2026-11-18，已解决）
 
-- 镜像构建在当前开发机**受阻**：Docker daemon（Windows 侧 29.8.1）可用，但无法连接 `registry-1.docker.io:443`（无 HTTPS 代理），且本地无 `python:3.11-slim` 基础镜像；git-bash/WSL 侧 daemon 亦不可达。
-- 处理：Dockerfile 与 `scripts/build_sandbox.sh` 已交付（脚本对网络失败给出明确排查提示）；**镜像实跑验证（非 root/体积/无包管理）移到网络可达环境执行**，不在本机伪造成功。
-- 不受影响：执行器骨架已用 mock docker CLI 完成 10 个单测（含 pip/apt 拒绝、超时 kill、创建即销毁、资源参数），全套 49 测试通过。镜像验收项在 W2 周报中标为「待环境」。
+- 原阻碍：`registry-1.docker.io:443` 不可达、无本地基础镜像。
+- 解除：人类授权后，用国内 mirror `docker.1ms.run/library/python:3.11-slim` 拉取成功（401 质询属 registry 正常行为），`docker tag` 为 `python:3.11-slim`，`local-agent/sandbox:0.1` 构建成功。
+- 镜像实测：187MB（< 500MB）、whoami=agent / uid=10001、无 pip、Python 3.11.18 + Bash 5.2。
+- 真实验收中发现并修复一个 mock 测不出的缺陷：tmpfs 挂载默认属主 root，非 root 用户不可写——已在 `create_container()` 的 tmpfs 参数加 `uid/gid=10001`，复测可写且 16m 限额生效。
+
+### 验收分层：可 mock 验证 vs 必须真实镜像验收
+
+> 用户明确要求：资源限制是否真生效（2.3）、只读/tmpfs 真隔离（2.4）、工具在容器里真执行（2.6）不得只凭 mock 签字。
+> 划分：**2.5 白名单匹配纯逻辑**（`check_network_target`）可 mock 关闭；其余三项必须真实容器实测，统一进下方「真实镜像验收清单」。
+
+**真实镜像验收清单**（build 跑通后逐条打勾关闭；已完成项标注实测证据）：
+
+- [x] R1 非 root：whoami=agent，uid=10001（实测 `id -u`=10001）
+- [x] R2 体积 < 500MB：187MB
+- [x] R3 无包管理：容器内 `pip` 不存在；`import pdfplumber` 失败
+- [x] R4（2.4）`/workspace` 只读：写入报 `Read-only file system`，WRITE_DENIED
+- [x] R5（2.4）`/tmp/agent-scratch` tmpfs 可写且限额：uid/gid 修复后写入成功；16m 限额写 20m 被截断到 16m
+- [x] R6（2.6）工具命令在容器内真执行：容器内跑 Python 标准库脚本输出 `{"files": 0}`，退出码 0
+- [x] R7（2.3）资源参数被 daemon 接受：`--cpus 2 --memory 2048m --pids-limit 10 --cap-drop ALL --network none --user 10001` 实跑输出 resources_ok
+- [ ] R8（2.3）超时 60s 真终止 + TIMEOUT 日志（需注入长命令，待 D3 专项）
+- [ ] R9（2.3）内存超限真 OOM + 记录（待 D3 专项）
+- [ ] R10（2.5）网络白名单真实连通验证（逻辑已 mock 关闭；真实出网测试待白名单环境）
+
+> R8/R9/R10 因需长时/限流/白名单环境，挂 D3 与 backlog；不阻塞 D2 完成。
 
 ---
 
@@ -117,15 +138,15 @@
 
 ## 4. 周五验收清单（H 逐条打分）
 
-- [ ] 2.0 工具依赖清单已确认，镜像不超范围（无 PDF/Excel/网页库）
-- [ ] 2.1 镜像非 root、< 500MB、无高危网络工具
-- [ ] 2.2 执行器独立容器、结束即销毁、签名未改
-- [ ] 2.3 资源限制生效（60s 超时、OOM 记录）
-- [ ] 2.4 只读挂载 + 路径穿越拦截
-- [ ] 2.5 默认断网 + 白名单可用
-- [ ] 2.6 五个工具全部可调用，A3 有结论
-- [ ] 2.7 S2 场景真跑通，报告落地，日志完整
-- [ ] 2.8 冷启动 < 2s，A2/A3/A4 均有书面结论
+- [x] 2.0 工具依赖清单已确认，镜像不超范围（无 PDF/Excel/网页库）
+- [x] 2.1 镜像非 root、187MB、无 pip（见真实镜像验收清单 R1–R3）
+- [x] 2.2 执行器独立容器、结束即销毁、签名未改（10 个 mock 单测）
+- [ ] 2.3 资源参数生效（R7 已过）；60s 超时真终止 + OOM 记录（R8/R9 待 D3 专项）
+- [x] 2.4 只读挂载 + tmpfs 可写限额（R4/R5 实测过）；路径穿越拦截（mock 过）
+- [x] 2.5 默认断网 + 白名单匹配逻辑（`check_network_target` 纯 mock 关闭）；真实出网待 R10
+- [x] 2.6 五个工具实现 + mock 派发测试（R6 容器内真执行已过）；A3 Stdio 握手待 D4
+- [ ] 2.7 S2 场景真跑通，报告落地，日志完整（待 D5）
+- [ ] 2.8 冷启动 < 2s，A2/A3/A4 均有书面结论（待 D5）
 
 ---
 
