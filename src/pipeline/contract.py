@@ -57,16 +57,59 @@ class GuardStage(PipelineStage):
         return StageResult(True, self.name, ctx.guard)
 
 
+# SANDBOX_RULES.md §4：以下操作必须步骤级二次确认，不因任务级确认而自动放行。
+_CONFIRM_TOOLS = {"report_write"}                       # 文件写入
+_CONFIRM_ARGS = ("target", "path", "script", "command")  # 可能指向写/删/改的参数
+
+
+def needs_step_confirm(step: dict[str, Any]) -> tuple[bool, str]:
+    """判断一个步骤是否需要 §4 步骤级二次确认。返回 (是否需要, 原因)。
+
+    规则（对齐 SANDBOX_RULES.md §4）：
+      - tool 标 high 风险 → 必须确认（与 PACKAGE_SPEC §5 一致）
+      - report_write（文件写入）→ 必须确认
+      - script/command 含写删安装特征（> / mv / rm / install）→ 必须确认
+      - args 显式 requires_confirm=True → 必须确认
+    纯读（dir_scan/file_read）与 log_record 不需要。
+    """
+    tool = str(step.get("tool", ""))
+    args = step.get("args", {}) or {}
+    if step.get("risk_level") == "high" or args.get("requires_confirm") is True:
+        return True, "high 风险或显式要求确认"
+    if tool in _CONFIRM_TOOLS:
+        return True, f"§4 文件写入类工具 {tool}"
+    script = " ".join(str(args.get(k, "")) for k in ("script", "command"))
+    if script:
+        markers = (" > ", " >> ", "rm ", "mv ", "pip install", "apt ", "apt-get ", "npm install")
+        if any(m in script for m in markers):
+            return True, "§4 写/删/安装类命令"
+    return False, ""
+
+
 class ApproveStage(PipelineStage):
-    """W1：确认动作由 CLI 层注入；此段读取注入结果，不自行交互。"""
+    """确认段：任务级确认（approved）+ §4 操作步骤级二次确认。
+
+    接口签名保持兼容（ADR-0001）：构造仍接受 approved；step_confirmer 可选，
+    未提供时 §4 操作一律 NEED_CONFIRM（安全默认，不放行）。
+    """
     name = "approve"
 
-    def __init__(self, approved: bool = True):
+    def __init__(self, approved: bool = True, step_confirmer: Any | None = None):
         self.approved = approved
+        self.step_confirmer = step_confirmer
 
     def run(self, ctx: StepContext) -> StageResult:
-        ctx.approve = {"approved": self.approved}
-        return StageResult(self.approved, self.name, ctx.approve)
+        if not self.approved:
+            ctx.approve = {"approved": False, "reason": "task_not_approved"}
+            return StageResult(False, self.name, ctx.approve)
+        need, reason = needs_step_confirm(ctx.step)
+        if need:
+            granted = bool(self.step_confirmer and self.step_confirmer(ctx.step, reason))
+            ctx.approve = {"approved": granted, "step_confirm_required": True,
+                           "reason": reason, "verdict": "NEED_CONFIRM" if not granted else "CONFIRMED"}
+            return StageResult(granted, self.name, ctx.approve)
+        ctx.approve = {"approved": True, "step_confirm_required": False}
+        return StageResult(True, self.name, ctx.approve)
 
 
 class ExecuteStage(PipelineStage):

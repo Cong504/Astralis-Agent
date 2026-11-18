@@ -55,7 +55,7 @@ def test_real_mode_data_flow_and_logging(tmp_path):
     tid = run_task(
         "x", router=ModelRouter(primary=EchoPlan()),
         db=TaskLogger(dbp), events=EventLog(ep),
-        ui=RuntimeUI(), dispatcher=dispatcher,
+        ui=RuntimeUI(ask_step_confirm=lambda step, reason: True), dispatcher=dispatcher,
     )
     # step-2 的 content 已替换为 step-1 输出
     assert seen[1]["content"] == "DATA=notes.txt\ndata.csv\n"

@@ -84,6 +84,13 @@ def build_cli_ui(stdin: TextIO, stdout: TextIO, confirm: bool, interval: float) 
         print("确认执行？(y/n): ", end="", file=stdout, flush=True)
         return (stdin.readline() or "").strip().lower() in ("y", "yes")
 
+    def ask_step_confirm(step, reason) -> bool:
+        if not confirm:  # --no-confirm 冒烟模式：任务级与步骤级一并跳过（仅测试用）
+            return True
+        print(f"  [二次确认] {reason}：{step.get('action')}（{step.get('tool')}）确认？(y/n): ",
+              end="", file=stdout, flush=True)
+        return (stdin.readline() or "").strip().lower() in ("y", "yes")
+
     return RuntimeUI(
         show_plan=lambda plan: print(render_plan(plan), file=stdout),
         ask_confirm=ask_confirm,
@@ -92,6 +99,7 @@ def build_cli_ui(stdin: TextIO, stdout: TextIO, confirm: bool, interval: float) 
         show_intent=lambda intent: print(_format_step(intent), file=stdout),
         alert=lambda msg: print(f"[告警] {msg}", file=stdout, flush=True),
         info=lambda msg: print(msg, file=stdout),
+        ask_step_confirm=ask_step_confirm,
     )
 
 

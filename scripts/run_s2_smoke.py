@@ -132,6 +132,7 @@ def main() -> int:
         show_plan=lambda p: print("计划:", p["goal"]),
         info=lambda m: print(m),
         alert=lambda m: print("[告警]", m),
+        ask_step_confirm=lambda step, reason: True,  # 冒烟：§4 步骤级确认自动放行
     )
 
     from model.router import ModelRouter

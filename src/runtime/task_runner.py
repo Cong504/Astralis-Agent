@@ -44,6 +44,8 @@ class RuntimeUI:
     show_intent: Any = lambda intent: None
     alert: Any = lambda message: None
     info: Any = lambda message: None
+    # §4 操作步骤级二次确认回调；默认拒绝（安全默认，未接 Interface 时不放行）
+    ask_step_confirm: Any = lambda step, reason: False
 
 
 PLANNING_PROMPT = (
@@ -65,12 +67,13 @@ PLANNING_PROMPT = (
 _STEP_REF = re.compile(r"\{\{\s*step-([0-9]+)\.stdout\s*\}\}")
 
 
-def build_pipeline(approved: bool, dispatcher: Any | None = None):
+def build_pipeline(approved: bool, dispatcher: Any | None = None, step_confirmer: Any | None = None):
     execute: PipelineStage = (
         SandboxExecuteStage(dispatcher, confirmed=approved) if dispatcher is not None
         else ExecuteStage()
     )
-    return [PreExecuteStage(), GuardStage(), ApproveStage(approved=approved),
+    return [PreExecuteStage(), GuardStage(),
+            ApproveStage(approved=approved, step_confirmer=step_confirmer),
             execute, PostExecuteStage()]
 
 
@@ -162,7 +165,12 @@ def run_task(
         events.append(task_id, "EXECUTING", {"backend": route.backend, "fallback": route.fallback})
         db.update_status(task_id, "EXECUTING", now())
 
-        pipeline = build_pipeline(approved=True, dispatcher=dispatcher if real_mode else None)
+        # stub 模式不真执行，§4 确认无意义 → 恒真放行；真执行模式才走 Interface 确认契约
+        pipeline = build_pipeline(
+            approved=True,
+            dispatcher=dispatcher if real_mode else None,
+            step_confirmer=ui.ask_step_confirm if real_mode else (lambda step, reason: True),
+        )
         outputs: dict[str, str] = {}
         all_ok = True
         for step in plan["steps"]:

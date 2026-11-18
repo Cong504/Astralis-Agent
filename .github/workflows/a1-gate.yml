@@ -1,0 +1,51 @@
+# G1 A1' 回归门禁 CI（W3 3.8，W3-plan.md §1）
+# 改 system prompt 或扩工具集 → 必重跑 A1' 合法性回归；无 Key 显式 SKIP，不静默通过。
+name: A1 Regression Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  a1-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Detect changed files
+        id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE=${{ github.event.pull_request.base.sha }}
+            HEAD=${{ github.event.pull_request.head.sha }}
+          else
+            BASE=${{ github.event.before }}
+            HEAD=${{ github.sha }}
+          fi
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" | tr '\n' ' ')
+          echo "files=$CHANGED" >> "$GITHUB_OUTPUT"
+
+      - name: G1 gate (A1' regression)
+        env:
+          # Key 仅从 secrets 注入 Runtime 侧；不进日志、不进容器（SANDBOX_RULES.md §6）
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/gate_a1_regression.py ${{ steps.diff.outputs.files }}
+
+      - name: Upload gate record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a1-gate-record
+          path: logs/a1_gate.jsonl
+          if-no-files-found: warn
