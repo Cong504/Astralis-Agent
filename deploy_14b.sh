@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# deploy_14b.sh — 在 3090 主机部署 Qwen2.5-14B-Instruct 量化版 + vLLM，并执行 A1 合法率实测
+# deploy_14b.sh — [状态：待本地硬件就绪后启用 / DEFERRED by ADR-0003]
+# 在 3090 主机部署 Qwen2.5-14B-Instruct 量化版 + vLLM，并执行 A1 合法率实测
 #
-# 运行位置：仅在 3090 主机执行（当前开发机无 GPU，禁止在此运行）
-# 上游依据：W1-plan.md §1.3 / §3（A1）、ARCHITECTURE.md §7/§9、W1-env-check.md §4
+# ⚠ 当前路线为云端先行（DeepSeek 主用），本地 LLM 暂缓；本脚本不进 W1/W2 验收路径。
+#   启用条件：本地硬件就绪（候选 RTX 5060Ti 16G / V100 32G，选型逻辑「显存优先于推理速度」）。
+# 运行位置：仅在具备 GPU 的主机执行（当前开发机无 GPU，禁止在此运行）
+# 上游依据：ADR-0003、ARCHITECTURE.md §7/§9、W1-env-check.md §4
 # 安全约定：本脚本不含任何 API Key，不访问云端，模型 endpoint 仅监听 127.0.0.1
 # 使用方法：
 #   chmod +x deploy_14b.sh

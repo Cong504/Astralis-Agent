@@ -27,7 +27,8 @@ def test_confirm_path_full_chain(tmp_path):
         r = log.replay(tid)
         assert r["task"]["status"] == "DONE"
         assert len(r["plans"]) == 1
-        assert len(r["actions"]) == 2
+        assert len(r["actions"]) == 3  # 1 model_call(usage) + 2 execute_stub
+        assert r["actions"][0]["action"] == "model_call"
     states = [e["state"] for e in EventLog(ep).for_task(tid)]
     assert states == ["RECEIVED", "PLANNING", "AWAIT_CONFIRM", "EXECUTING", "DONE"]
 
