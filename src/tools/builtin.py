@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from sandbox.executor import ExecutionRequest, ExecutionResult, Verdict
+from sandbox.executor import ExecutionRequest, ExecutionResult, MountPolicy, Verdict
 from tools.mcp_bridge import ToolCall, ToolResult, validate_call
 
 
@@ -24,9 +24,10 @@ class ExecutorLike(Protocol):
 class BuiltinTools:
     """5 个基础工具；所有命令类工具经 executor.execute() 派发到沙箱。"""
 
-    def __init__(self, executor: ExecutorLike, task_id: str = "t"):
+    def __init__(self, executor: ExecutorLike, task_id: str = "t", mounts: MountPolicy | None = None):
         self.executor = executor
         self.task_id = task_id
+        self.mounts = mounts or MountPolicy()
         self._step = 0
 
     def _next_step(self) -> str:
@@ -41,6 +42,7 @@ class BuiltinTools:
             task_id=call.task_id,
             step_id=call.step_id or self._next_step(),
             command=command,
+            mounts=self.mounts,
             user_confirmed=call.confirmed,
         )
         result = self.executor.execute(request)
@@ -74,13 +76,19 @@ class BuiltinTools:
 
     def report_write(self, call: ToolCall) -> ToolResult:
         target = str(call.args.get("target", "/tmp/agent-scratch/report.md"))
-        if not target.startswith("/tmp/agent-scratch/"):
-            return ToolResult(tool="report_write", ok=False, error="仅允许写入 /tmp/agent-scratch")
+        # 允许 /tmp/agent-scratch（临时）与 /output（用户确认后的宿主输出挂载，S2 报告落库）
+        allowed = target.startswith("/tmp/agent-scratch/") or (
+            target.startswith("/output/") and bool(self.mounts.output_src)
+        )
+        if not allowed:
+            return ToolResult(tool="report_write", ok=False, error="仅允许写入 /tmp/agent-scratch 或已确认的 /output")
         content = str(call.args.get("content", ""))
         # 用 base64 传递内容，避免命令注入；容器内有标准库 base64 可用
         import base64
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        cmd = f"printf '%s' {encoded} | base64 -d > {target}"
+        # chmod 666：Windows Docker Desktop 挂载卷上，容器 uid 10001 建的文件宿主默认不可读；
+        # 报告非敏感（数据流输出），放开读权限以便宿主落库读取（S2 冒烟实测发现）。
+        cmd = f"printf '%s' {encoded} | base64 -d > {target} && chmod 666 {target}"
         return self._dispatch(call, cmd)
 
     def log_record(self, call: ToolCall) -> ToolResult:

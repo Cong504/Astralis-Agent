@@ -68,11 +68,29 @@
 - [x] R5（2.4）`/tmp/agent-scratch` tmpfs 可写且限额：uid/gid 修复后写入成功；16m 限额写 20m 被截断到 16m
 - [x] R6（2.6）工具命令在容器内真执行：容器内跑 Python 标准库脚本输出 `{"files": 0}`，退出码 0
 - [x] R7（2.3）资源参数被 daemon 接受：`--cpus 2 --memory 2048m --pids-limit 10 --cap-drop ALL --network none --user 10001` 实跑输出 resources_ok
-- [ ] R8（2.3）超时 60s 真终止 + TIMEOUT 日志（需注入长命令，待 D3 专项）
-- [ ] R9（2.3）内存超限真 OOM + 记录（待 D3 专项）
-- [ ] R10（2.5）网络白名单真实连通验证（逻辑已 mock 关闭；真实出网测试待白名单环境）
+- [x] R8（2.3）超时真终止：`sleep 120` + step_timeout=3s → verdict=TIMEOUT，3.8s 被 kill，容器已销毁（scripts/verify_limits.py 实测）
+- [x] R9（2.3）内存超限真 OOM：分配 512MB + memory=64m → verdict=OOM_KILLED，exit=137，容器已销毁（scripts/verify_limits.py 实测）
+- [ ] R10（2.5）网络白名单真实连通 → **进 backlog，标记「需白名单环境」**，按裁决保持纯 mock 关闭，不阻塞 W2 收尾
 
-> R8/R9/R10 因需长时/限流/白名单环境，挂 D3 与 backlog；不阻塞 D2 完成。
+> R10 为唯一未关闭的真实项，已明确挂 backlog；其余 R1–R9 全部真实实测打勾。
+
+### S2 端到端实测结果（W2.7，2026-11-18）
+
+- 任务：扫描目录 → 生成 Markdown 报告 → 落库；真 Docker 容器执行（stub 计划，backend=stub，但沙箱为真）。
+- 结果：**PASS**，状态 RECEIVED → PLANNING → AWAIT_CONFIRM → EXECUTING → DONE；报告含 `notes.txt / data.csv / sub/deep.md` 三个真实扫描结果。
+- 命令：`python scripts/run_s2_smoke.py`。
+- 端到端中发现并修复两个真 bug：① Windows GBK 默认编码导致 docker CLI 输出 UTF-8 解码崩溃（`_default_runner` 改 `encoding=utf-8, errors=replace`）；② Windows Docker Desktop 挂载卷 uid 映射导致宿主读文件 PermissionError（报告验证改为「容器内读回自证」，宿主读取标 N/A 不作判据）。
+- 报告落地位置：宿主输出挂载 `/output/report.md`（容器内可见并经容器读回验证）；宿主直读在 Windows 挂载下 N/A。
+
+### 冷启动基线（供 2.8 定预算上界，2026-11-18 实测）
+
+| 指标 | 实测值 | 说明 |
+|---|---|---|
+| create（docker create） | 0.173s | 新建一次性容器 |
+| create → 首条命令返回 | 0.704s | 冷启动主指标 |
+| 端到端（含计划/确认/2 步执行） | 1.80s | 全链路 |
+
+> 2.8 预算上界待你据上述基线拍板；当前仅记录基线，不预设 N 值。
 
 ---
 
@@ -141,12 +159,16 @@
 - [x] 2.0 工具依赖清单已确认，镜像不超范围（无 PDF/Excel/网页库）
 - [x] 2.1 镜像非 root、187MB、无 pip（见真实镜像验收清单 R1–R3）
 - [x] 2.2 执行器独立容器、结束即销毁、签名未改（10 个 mock 单测）
-- [ ] 2.3 资源参数生效（R7 已过）；60s 超时真终止 + OOM 记录（R8/R9 待 D3 专项）
+- [x] 2.3 资源参数生效 + 超时真终止 + OOM 记录（R7/R8/R9 全部实测过）
 - [x] 2.4 只读挂载 + tmpfs 可写限额（R4/R5 实测过）；路径穿越拦截（mock 过）
-- [x] 2.5 默认断网 + 白名单匹配逻辑（`check_network_target` 纯 mock 关闭）；真实出网待 R10
+- [x] 2.5 默认断网 + 白名单匹配逻辑（`check_network_target` 纯 mock 关闭）；R10 真实出网进 backlog
 - [x] 2.6 五个工具实现 + mock 派发测试（R6 容器内真执行已过）；A3 Stdio 握手待 D4
-- [ ] 2.7 S2 场景真跑通，报告落地，日志完整（待 D5）
-- [ ] 2.8 冷启动 < 2s，A2/A3/A4 均有书面结论（待 D5）
+- [x] 2.7 S2 场景真跑通（PASS），报告落地，状态机完整，日志含每步 verdict/stdout
+- [ ] 2.8 冷启动预算上界待人类拍板（基线已测：create 0.173s / create→首命令 0.704s / E2E 1.80s）；A2/A3/A4 待 D4–D5
+
+### Backlog（W2 产生，不进本周验收）
+
+- **R10 网络白名单真实出网验证**：需白名单网络环境，按裁决保持纯 mock 关闭，环境具备后补测。
 
 ---
 

@@ -3,10 +3,16 @@
 职责：唯一编排 Model / Tools / Sandbox / Data 的地方；持有 TokenBudget，
 跨多次模型调用累计并在超限时中止任务 + 告警（ADR-0003）。
 Interface 通过 RuntimeUI 回调注入展示/确认/进度反馈，Runtime 不直接依赖 CLI。
+
+执行分两种模式（同一套五段管道，execute 段实现不同，ADR-0001）：
+  - 默认（W1 stub）：ExecuteStage 只打印意图，不真跑。
+  - 注入 executor+tools（W2）：用 SandboxExecuteStage 真跑，步骤输出可经
+    `{{step-N.stdout}}` 引用给下游（S2 报告生成数据流）。
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,7 +24,8 @@ from data.events import EventLog
 from model.client import generate_plan_with_retry
 from model.router import ModelRouter, build_stub_router
 from pipeline.contract import (
-    ApproveStage, ExecuteStage, GuardStage, PostExecuteStage, PreExecuteStage, StepContext,
+    ApproveStage, ExecuteStage, GuardStage, PipelineStage, PostExecuteStage,
+    PreExecuteStage, SandboxExecuteStage, StepContext,
 )
 from runtime.token_budget import TokenBudget, TokenBudgetConfig, TokenBudgetExceeded
 
@@ -46,15 +53,29 @@ PLANNING_PROMPT = (
     "task_id: {task_id}\n任务: {raw_input}"
 )
 
+_STEP_REF = re.compile(r"\{\{\s*step-([0-9]+)\.stdout\s*\}\}")
 
-def build_pipeline(approved: bool):
-    return [
-        PreExecuteStage(),
-        GuardStage(),
-        ApproveStage(approved=approved),
-        ExecuteStage(),
-        PostExecuteStage(),
-    ]
+
+def build_pipeline(approved: bool, dispatcher: Any | None = None):
+    execute: PipelineStage = (
+        SandboxExecuteStage(dispatcher, confirmed=approved) if dispatcher is not None
+        else ExecuteStage()
+    )
+    return [PreExecuteStage(), GuardStage(), ApproveStage(approved=approved),
+            execute, PostExecuteStage()]
+
+
+def _render_args(args: dict[str, Any], outputs: dict[str, str]) -> dict[str, Any]:
+    """把 args 中的 {{step-N.stdout}} 替换为前序步骤输出（S2 数据流）。"""
+    rendered: dict[str, Any] = {}
+    for key, value in args.items():
+        if isinstance(value, str):
+            def repl(m: re.Match) -> str:
+                return outputs.get(f"step-{m.group(1)}", "")
+            rendered[key] = _STEP_REF.sub(repl, value)
+        else:
+            rendered[key] = value
+    return rendered
 
 
 def run_task(
@@ -65,9 +86,11 @@ def run_task(
     ui: RuntimeUI | None = None,
     budget_config: TokenBudgetConfig | None = None,
     own_db: bool = False,
+    dispatcher: Any | None = None,
 ) -> str:
     """跑一条任务闭环，返回 task_id。
 
+    dispatcher 注入时（BuiltinTools.call）走真执行；否则 W1 stub。
     own_db=True 时由本函数负责 close（CLI 调用用；测试注入 db 时为 False）。
     """
     router = router or build_stub_router()
@@ -76,6 +99,7 @@ def run_task(
     events = events or EventLog()
     task_id = f"task-{uuid.uuid4().hex[:8]}"
     budget = TokenBudget(config=budget_config, task_id=task_id)
+    real_mode = dispatcher is not None
 
     try:
         events.append(task_id, "RECEIVED", {"raw_input": raw_input})
@@ -92,7 +116,6 @@ def run_task(
             ui.progress_stop()
         plan["task_id"] = task_id
 
-        # Runtime 累计 usage（跨多次调用）；超限即中止任务并告警
         try:
             usage_snap = budget.consume(route.usage)
         except TokenBudgetExceeded as exc:
@@ -126,23 +149,53 @@ def run_task(
         events.append(task_id, "EXECUTING", {"backend": route.backend, "fallback": route.fallback})
         db.update_status(task_id, "EXECUTING", now())
 
-        pipeline = build_pipeline(approved=True)
+        pipeline = build_pipeline(approved=True, dispatcher=dispatcher if real_mode else None)
+        outputs: dict[str, str] = {}
+        all_ok = True
         for step in plan["steps"]:
-            ctx = StepContext(task_id=task_id, step=step, goal=plan["goal"])
+            args = _render_args(step.get("args", {}), outputs)
+            exec_step = {**step, "args": args}
+            ctx = StepContext(task_id=task_id, step=exec_step, goal=plan["goal"])
             results = []
             for stage in pipeline:
                 result = stage.run(ctx)
                 results.append({"stage": stage.name, "ok": result.ok, "detail": result.detail})
+                if not result.ok:
+                    break  # 单步失败默认中止（ARCHITECTURE §3）
+            step_ok = all(r["ok"] for r in results)
+            all_ok = all_ok and step_ok
             ui.show_intent(ctx.execute)
-            db.log_action(
-                task_id, "execute_stub", "STUB", now(),
-                step_id=step.get("step_id"), tool=step.get("tool"),
-                args=step.get("args"), result={"pipeline": results},
-            )
+            if real_mode:
+                detail = ctx.execute or {}
+                stdout = (detail.get("output") or {}).get("stdout", "")
+                step_id = step.get("step_id", "")
+                if step_id:
+                    outputs[step_id] = stdout
+                db.log_action(
+                    task_id, "execute_real", detail.get("verdict", "UNKNOWN"), now(),
+                    step_id=step_id, tool=step.get("tool"),
+                    args=args, result={"pipeline": results, "stdout": stdout},
+                )
+                if not step_ok:
+                    db.log_action(
+                        task_id, "step_failed", "FAILED", now(),
+                        step_id=step.get("step_id"), tool=step.get("tool"),
+                        result={"verdict": detail.get("verdict"), "error": detail.get("error")},
+                    )
+                    break
+            else:
+                db.log_action(
+                    task_id, "execute_stub", "STUB", now(),
+                    step_id=step.get("step_id"), tool=step.get("tool"),
+                    args=args, result={"pipeline": results},
+                )
 
-        events.append(task_id, "DONE", {"backend": route.backend, "usage": usage_snap})
-        db.update_status(task_id, "DONE", now())
-        ui.info(f"完成。task_id={task_id}")
+        final_state = "DONE" if all_ok else "FAILED"
+        events.append(task_id, final_state, {
+            "backend": route.backend, "usage": usage_snap, "real": real_mode,
+        })
+        db.update_status(task_id, final_state, now())
+        ui.info(f"完成。task_id={task_id} 状态={final_state}")
         return task_id
     finally:
         if own_db:

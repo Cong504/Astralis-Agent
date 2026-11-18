@@ -70,13 +70,50 @@ class ApproveStage(PipelineStage):
 
 
 class ExecuteStage(PipelineStage):
-    """W1 桩：只打印本应执行的工具调用，不真跑。W2 填入沙箱执行器。"""
+    """W1 桩：只打印本应执行的工具调用，不真跑。W2 用 SandboxExecuteStage 替换。"""
     name = "execute"
 
     def run(self, ctx: StepContext) -> StageResult:
         intent = {"tool": ctx.step.get("tool"), "args": ctx.step.get("args", {}), "stub": True}
         ctx.execute = intent
         return StageResult(True, self.name, intent)
+
+
+class SandboxExecuteStage(PipelineStage):
+    """W2 真执行段：把 StepContext 转成 ToolCall，交给注入的 dispatcher（BuiltinTools.call）。
+
+    五段管道接口签名不变（ADR-0001）——仅替换 execute 段实现。
+    结果写回 ctx.execute，字段含 verdict / exit_code / stdout，供 Runtime 落库与数据流下游使用。
+    """
+    name = "execute"
+
+    def __init__(self, dispatcher: Any, confirmed: bool = True):
+        self.dispatcher = dispatcher
+        self.confirmed = confirmed
+
+    def run(self, ctx: StepContext) -> StageResult:
+        from tools.mcp_bridge import ToolCall  # 延迟导入，避免包循环
+
+        call = ToolCall(
+            task_id=ctx.task_id,
+            step_id=ctx.step.get("step_id", ""),
+            tool=ctx.step.get("tool", ""),
+            args=dict(ctx.step.get("args", {})),
+            confirmed=self.confirmed,
+        )
+        result = self.dispatcher(call)  # ToolResult
+        detail = {
+            "tool": result.tool,
+            "step_id": call.step_id,
+            "stub": False,
+            "ok": result.ok,
+            "verdict": result.verdict,
+            "matched_rule": result.matched_rule,
+            "output": result.output,
+            "error": result.error,
+        }
+        ctx.execute = detail
+        return StageResult(result.ok, self.name, detail)
 
 
 class PostExecuteStage(PipelineStage):
