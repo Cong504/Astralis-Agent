@@ -192,11 +192,20 @@ def run_task(
                 step_id = step.get("step_id", "")
                 if step_id:
                     outputs[step_id] = stdout
+                verdict = detail.get("verdict", "UNKNOWN")
                 db.log_action(
-                    task_id, "execute_real", detail.get("verdict", "UNKNOWN"), now(),
+                    task_id, "execute_real", verdict, now(),
                     step_id=step_id, tool=step.get("tool"),
                     args=args, result={"pipeline": results, "stdout": stdout},
                 )
+                # SANDBOX_RULES.md §7：拦截事件单独成表，便于 W3 逃逸测试统计
+                if verdict in ("DENIED_BY_RULE", "NEED_CONFIRM", "TIMEOUT", "OOM_KILLED"):
+                    db.log_denial(
+                        task_id,
+                        (detail.get("output") or {}).get("command", str(args)),
+                        verdict, now(), step_id=step_id,
+                        matched_rule=detail.get("matched_rule") or "",
+                    )
                 if not step_ok:
                     db.log_action(
                         task_id, "step_failed", "FAILED", now(),

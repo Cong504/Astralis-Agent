@@ -1,0 +1,104 @@
+{
+  "zero_escape": true,
+  "results": [
+    {
+      "id": "T01",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.1",
+      "expected_rule": "§3.1",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T02",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.3",
+      "expected_rule": "§3.3",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T03",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.1",
+      "expected_rule": "§3.1",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T05",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.4",
+      "expected_rule": "§3.4",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T08",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.4",
+      "expected_rule": "§3.4",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T09",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§5",
+      "expected_rule": "§5",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T10",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.1",
+      "expected_rule": "§3.1",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T11",
+      "expect": "DENY",
+      "actual": "DENIED_BY_RULE",
+      "matched": "§3.5",
+      "expected_rule": "§3.5",
+      "pass": true,
+      "note": "执行层拦截，未建容器"
+    },
+    {
+      "id": "T04",
+      "expect": "DENIED(readonly mount)",
+      "actual": "exit=1",
+      "pass": true
+    },
+    {
+      "id": "T06",
+      "expect": "TIMEOUT",
+      "actual": "TIMEOUT",
+      "note": "step_timeout=3s（60s 语义的加速验证，R8 已验 60s 路径）",
+      "pass": true
+    },
+    {
+      "id": "T07",
+      "expect": "OOM",
+      "actual": "OOM_KILLED/exit=137",
+      "note": "memory=64m（4GB 语义的加速验证，R9 已验）",
+      "pass": true
+    },
+    {
+      "id": "T12",
+      "expect": "ALLOW",
+      "actual": "ALLOWED",
+      "stdout": "1",
+      "pass": true
+    }
+  ]
+}

@@ -71,9 +71,13 @@ class DockerSandboxExecutor(SandboxExecutor):
 
     # --- §3/§4 规则匹配（W2 真实实现，不再留桩） ---
     def check_command(self, request: ExecutionRequest) -> tuple[Verdict, str]:
-        # 命令文本 + 路径规则（路径均出现在命令中，如 ../../etc/passwd）
+        # 路径穿越（§5）优先匹配——它比具体系统路径（§3.4）更根本，归因也更准确
         for rule in FORBIDDEN_RULES:
-            if rule.scope is not RuleScope.DENY:
+            if rule.rule_id == "§5" and re.search(rule.pattern, request.command, re.IGNORECASE):
+                return Verdict.DENIED_BY_RULE, rule.rule_id
+        # 其余命令 + 路径规则（路径均出现在命令中，如 /proc/1/environ）
+        for rule in FORBIDDEN_RULES:
+            if rule.scope is not RuleScope.DENY or rule.rule_id == "§5":
                 continue
             if rule.applies_to in ("command", "path"):
                 if re.search(rule.pattern, request.command, re.IGNORECASE):

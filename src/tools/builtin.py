@@ -50,7 +50,8 @@ class BuiltinTools:
         return ToolResult(
             tool=call.tool,
             ok=ok,
-            output={"stdout": result.stdout, "exit_code": result.exit_code},
+            # command 字段供 §7 审计（原始命令完整留痕，不截断）
+            output={"stdout": result.stdout, "exit_code": result.exit_code, "command": command},
             verdict=result.verdict.value,
             matched_rule=result.matched_rule,
             error=result.stderr if not ok else "",

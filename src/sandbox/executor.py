@@ -129,7 +129,7 @@ class Rule:
 # SANDBOX_RULES.md §3 禁止清单的结构化表示（逐条对齐，W3.1 直接消费）
 FORBIDDEN_RULES: tuple[Rule, ...] = (
     # §3.1 破坏性命令
-    Rule("§3.1", RuleScope.DENY, r"\brm\s+-rf\s+(/|/\*|~)"),
+    Rule("§3.1", RuleScope.DENY, r"\brm\s+-[rRfF]{2}\s+(/|/\*|~)"),  # -rf/-fr/-rr/-FF 等组合
     Rule("§3.1", RuleScope.DENY, r"\bmkfs\."),
     Rule("§3.1", RuleScope.DENY, r"\bdd\s+if=.*of=/dev/"),
     Rule("§3.1", RuleScope.DENY, r":\(\)\s*\{.*:\|.*\}\s*;"),  # fork 炸弹
@@ -146,8 +146,9 @@ FORBIDDEN_RULES: tuple[Rule, ...] = (
     Rule("§3.4", RuleScope.DENY, r"\b(sudo|su|doas)\b"),
     Rule("§3.4", RuleScope.DENY, r"\b(mount|umount|nsenter|unshare)\b"),
     Rule("§3.4", RuleScope.DENY, r"/var/run/docker\.sock", applies_to="path"),
-    Rule("§3.4", RuleScope.DENY, r"^/(etc|boot|sys|dev)(/|$)", applies_to="path"),
-    Rule("§3.4", RuleScope.DENY, r"^/proc/(?!self/)", applies_to="path"),
+    # 路径可出现在命令任意位置（如 cat /proc/1/environ），不用 ^ 锚点；加词边界避免误伤 /etcetera
+    Rule("§3.4", RuleScope.DENY, r"/(etc|boot|sys|dev)(/|\s|$)", applies_to="path"),
+    Rule("§3.4", RuleScope.DENY, r"/proc/(?!self/)", applies_to="path"),
     # §3.5 包管理与安装
     Rule("§3.5", RuleScope.DENY, r"\b(apt|apt-get|yum|dnf|apk)\s"),
     Rule("§3.5", RuleScope.DENY, r"\bpip\s+install\b"),

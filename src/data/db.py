@@ -42,8 +42,20 @@ CREATE TABLE IF NOT EXISTS actions (
     created_at  TEXT NOT NULL,
     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
 );
+-- SANDBOX_RULES.md §7：拦截事件（DENIED）单独成表，便于第 3 周逃逸测试统计
+CREATE TABLE IF NOT EXISTS denials (
+    denial_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id      TEXT NOT NULL,
+    step_id      TEXT,
+    command      TEXT NOT NULL,          -- 原始命令完整留痕
+    verdict      TEXT NOT NULL,          -- DENIED_BY_RULE / NEED_CONFIRM / TIMEOUT / OOM_KILLED
+    matched_rule TEXT,                   -- 命中规则编号，如 §3.1
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+);
 CREATE INDEX IF NOT EXISTS idx_plans_task   ON plans(task_id);
 CREATE INDEX IF NOT EXISTS idx_actions_task ON actions(task_id);
+CREATE INDEX IF NOT EXISTS idx_denials_task ON denials(task_id);
 """
 
 
@@ -114,11 +126,29 @@ class TaskLogger:
         )
         self.conn.commit()
 
+    def log_denial(
+        self,
+        task_id: str,
+        command: str,
+        verdict: str,
+        created_at: str,
+        step_id: str | None = None,
+        matched_rule: str | None = None,
+    ) -> None:
+        """记录一条拦截事件到 denials 表（SANDBOX_RULES.md §7，单独成表）。"""
+        self.conn.execute(
+            """INSERT INTO denials (task_id, step_id, command, verdict, matched_rule, created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (task_id, step_id, command, verdict, matched_rule, created_at),
+        )
+        self.conn.commit()
+
     def replay(self, task_id: str) -> dict[str, Any]:
-        """按 task_id 还原任务、计划、动作全链路。"""
+        """按 task_id 还原任务、计划、动作、拦截事件全链路。"""
         task = self.conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
         if task is None:
             raise KeyError(f"task_id 不存在: {task_id}")
         plans = [dict(r) for r in self.conn.execute("SELECT * FROM plans WHERE task_id=?", (task_id,))]
         actions = [dict(r) for r in self.conn.execute("SELECT * FROM actions WHERE task_id=?", (task_id,))]
-        return {"task": dict(task), "plans": plans, "actions": actions}
+        denials = [dict(r) for r in self.conn.execute("SELECT * FROM denials WHERE task_id=?", (task_id,))]
+        return {"task": dict(task), "plans": plans, "actions": actions, "denials": denials}
