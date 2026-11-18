@@ -22,6 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from compat.encoding import force_utf8_stdio  # noqa: E402
+
+force_utf8_stdio()
 
 from model.parser import load_validator, normalize_plan, parse_plan  # noqa: E402
 from model.router import BackendError, build_cloud_router  # noqa: E402

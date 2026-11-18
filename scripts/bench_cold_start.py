@@ -30,6 +30,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from compat.encoding import force_utf8_stdio  # noqa: E402
+
+force_utf8_stdio()
 
 from sandbox.docker_executor import DockerSandboxExecutor  # noqa: E402
 from sandbox.executor import ExecutionRequest, Verdict  # noqa: E402

@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, TextIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from compat.encoding import force_utf8_stdio  # noqa: E402
+
+force_utf8_stdio()  # 全局 UTF-8 防御（W3 复盘系统级方案）
 
 from data.db import TaskLogger  # noqa: E402
 from data.events import EventLog  # noqa: E402

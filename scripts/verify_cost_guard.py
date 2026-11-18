@@ -16,9 +16,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-# Windows 控制台 GBK 无法输出 ¥ 等字符（W2-retro 编码教训），强制 UTF-8
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+from compat.encoding import force_utf8_stdio  # noqa: E402
+
+force_utf8_stdio()  # 全局 UTF-8 防御取代原个案 reconfigure（W3 复盘系统级方案）
 
 from model.router import TokenUsage  # noqa: E402
 from runtime.token_budget import (  # noqa: E402
