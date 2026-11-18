@@ -133,11 +133,13 @@ def run_task(
         try:
             usage_snap = budget.consume(route.usage)
         except TokenBudgetExceeded as exc:
+            alert = exc.to_alert()  # 3.6 结构化告警（含超限维度）
             events.append(task_id, "FAILED", {
                 "reason": "token_budget_exceeded", "backend": route.backend,
-                "snapshot": exc.snapshot,
+                "alert": alert,
             })
             db.update_status(task_id, "FAILED", now())
+            db.log_action(task_id, "budget_alert", alert["dimension"], now(), result=alert)
             ui.alert(f"任务已中止：{exc}（task_id={task_id}）")
             if not own_db:
                 db.close()
@@ -173,6 +175,7 @@ def run_task(
         )
         outputs: dict[str, str] = {}
         all_ok = True
+        reflection_steps: list[dict[str, Any]] = []  # 3.4 复盘输入
         for step in plan["steps"]:
             args = _render_args(step.get("args", {}), outputs)
             exec_step = {**step, "args": args}
@@ -185,6 +188,12 @@ def run_task(
                     break  # 单步失败默认中止（ARCHITECTURE §3）
             step_ok = all(r["ok"] for r in results)
             all_ok = all_ok and step_ok
+            # 复盘/记忆输入：real 段拿 verdict，stub 段记 STUB（统一收集，不依赖执行模式）
+            exec_detail = ctx.execute or {}
+            reflection_steps.append({
+                "tool": step.get("tool"),
+                "verdict": exec_detail.get("verdict", "STUB"),
+            })
             ui.show_intent(ctx.execute)
             if real_mode:
                 detail = ctx.execute or {}
@@ -220,7 +229,29 @@ def run_task(
                     args=args, result={"pipeline": results},
                 )
 
+        # 3.4 复盘：固定三字段；失败标 reflect_failed，不改变主流程状态
         final_state = "DONE" if all_ok else "FAILED"
+        try:
+            from reflection.generator import generate_reflection
+            denials_for_reflection = db.replay(task_id).get("denials", [])
+            reflection = generate_reflection(
+                task_id, final_state, reflection_steps, denials_for_reflection, usage_snap,
+            )
+            db.log_action(task_id, "reflection", "OK", now(), result=reflection)
+            # 3.5：复盘沉淀进记忆库（结构化 + 标签，非向量）
+            try:
+                from data.memory import extract_tags, remember
+                tags = extract_tags(reflection_steps, denials_for_reflection, reflection)
+                remember(db.conn, task_id, tags,
+                         f"{reflection['success_points']} | {reflection['improvement']}", now())
+            except Exception:  # noqa: BLE001 - 记忆写入失败不影响主流程与复盘
+                pass
+            events.append(task_id, "REFLECTING", {"status": final_state, "reflect_failed": False})
+        except Exception as exc:  # noqa: BLE001 - 复盘失败不破坏主流程
+            events.append(task_id, "REFLECTING", {"reflect_failed": True, "error": str(exc)})
+            db.log_action(task_id, "reflection_failed", "FAILED", now(),
+                          result={"error": str(exc)})
+
         events.append(task_id, final_state, {
             "backend": route.backend, "usage": usage_snap, "real": real_mode,
         })

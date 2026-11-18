@@ -50,6 +50,17 @@ class TokenBudgetExceeded(RuntimeError):
         super().__init__(message)
         self.snapshot = snapshot
 
+    def to_alert(self) -> dict:
+        """3.6：结构化告警（可观测、可回放），含超限维度与用量快照。"""
+        snapshot = self.snapshot
+        dimension = "tokens" if snapshot["total_tokens"] >= snapshot["max_tokens"] else "cost"
+        return {
+            "type": "token_budget_exceeded",
+            "dimension": dimension,
+            "message": str(self),
+            "snapshot": snapshot,
+        }
+
 
 class TokenBudget:
     """单个任务的累计预算账本，由 Runtime 持有，一次任务一个实例。"""

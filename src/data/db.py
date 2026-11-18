@@ -53,9 +53,18 @@ CREATE TABLE IF NOT EXISTS denials (
     created_at   TEXT NOT NULL,
     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
 );
+-- W3 3.5 记忆库：结构化经验 + 标签，按标签检索（不引入向量库，ARCHITECTURE.md §7）
+CREATE TABLE IF NOT EXISTS memory (
+    memory_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     TEXT NOT NULL,
+    tags_json   TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_plans_task   ON plans(task_id);
 CREATE INDEX IF NOT EXISTS idx_actions_task ON actions(task_id);
 CREATE INDEX IF NOT EXISTS idx_denials_task ON denials(task_id);
+CREATE INDEX IF NOT EXISTS idx_memory_tags  ON memory(tags_json);
 """
 
 

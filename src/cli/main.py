@@ -171,6 +171,22 @@ def replay_task(task_id: str, db_path: Path | None = None, events_path: Path | N
             print(f"计划: {p['goal']} ({len(p['plan_json'])} bytes)", file=stdout)
         for a in data["actions"]:
             print(f"动作: {a['action']} step={a['step_id']} tool={a['tool']} status={a['status']}", file=stdout)
+        # 3.7：拦截事件（SANDBOX_RULES.md §7 独立表）
+        denials = data.get("denials", [])
+        if denials:
+            print(f"拦截事件 ({len(denials)}):", file=stdout)
+            for d in denials:
+                print(f"  {d['verdict']} rule={d['matched_rule']} step={d['step_id']} "
+                      f"command={d['command'][:80]}", file=stdout)
+        # 3.7：复盘字段（3.4 产出后填充；此处兼容尚未生成的任务）
+        reflections = [a for a in data["actions"] if a["action"] == "reflection"]
+        if reflections:
+            import json as _json
+            r = _json.loads(reflections[-1]["result_json"] or "{}")
+            print("复盘:", file=stdout)
+            print(f"  成功点: {r.get('success_points')}", file=stdout)
+            print(f"  失败点: {r.get('failure_points')}", file=stdout)
+            print(f"  改进建议: {r.get('improvement')}", file=stdout)
     finally:
         db.close()
     el = EventLog(events_path) if events_path else EventLog()

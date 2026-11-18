@@ -27,10 +27,11 @@ def test_confirm_path_full_chain(tmp_path):
         r = log.replay(tid)
         assert r["task"]["status"] == "DONE"
         assert len(r["plans"]) == 1
-        assert len(r["actions"]) == 3  # 1 model_call(usage) + 2 execute_stub
+        assert len(r["actions"]) == 4  # 1 model_call + 2 execute_stub + 1 reflection(3.4)
         assert r["actions"][0]["action"] == "model_call"
+        assert r["actions"][-1]["action"] == "reflection"
     states = [e["state"] for e in EventLog(ep).for_task(tid)]
-    assert states == ["RECEIVED", "PLANNING", "AWAIT_CONFIRM", "EXECUTING", "DONE"]
+    assert states == ["RECEIVED", "PLANNING", "AWAIT_CONFIRM", "EXECUTING", "REFLECTING", "DONE"]
 
 
 def test_cancel_path_logs_cancelled(tmp_path):
