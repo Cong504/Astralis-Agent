@@ -21,20 +21,37 @@
 ## 1. W2-2.0 前置：工具依赖清单（先清单后镜像）
 
 > 目的：你指出的坑——先定依赖再定镜像，避免镜像做完发现缺库返工。
+> 状态：**已裁决（2026-11-18，人类确认）**——PDF / Excel / 网页抓取全部不纳入 v0.1。
 
-| 工具 | 运行时 | 依赖库 | 预估体积 |
-|---|---|---|---|
-| 文件读写（file_read / dir_scan / report_write） | Python 3.11 | 无（标准库 os/pathlib/json/csv） | 0 |
-| 脚本执行（script_run，Bash） | Bash + Python 3.11 | 无（标准库 subprocess） | 0 |
-| PDF 提取 | Python 3.11 | pdfplumber | ~50MB |
-| Excel 处理 | Python 3.11 | openpyxl | ~30MB |
-| 网页抓取 | Python 3.11 | httpx + beautifulsoup4 | ~40MB |
+| 工具 | 运行时 | 依赖库 | 预估体积 | v0.1 范围 |
+|---|---|---|---|---|
+| 文件读写（file_read / dir_scan / report_write） | Python 3.11 | 无（标准库 os/pathlib/json/csv） | 0 | ✅ 纳入 |
+| 脚本执行（script_run，Bash） | Bash + Python 3.11 | 无（标准库 subprocess） | 0 | ✅ 纳入 |
+| 日志记录（log_record） | Python 3.11 | 无（标准库 json） | 0 | ✅ 纳入 |
+| PDF 提取 | Python 3.11 | pdfplumber | ~50MB | ❌ 排除（backlog → v0.2） |
+| Excel 处理 | Python 3.11 | openpyxl | ~30MB | ❌ 排除（backlog → v0.2） |
+| 网页抓取 | Python 3.11 | httpx + beautifulsoup4 | ~40MB | ❌ 排除（PRD §5 非目标 → v0.2） |
 
-**结论与冲突提示（需你裁决）**：
+**镜像基线**：Python 3.11 + Bash + 标准库，0 额外依赖，保持极简（< 500MB）。
 
-1. 上述后三项（PDF / Excel / 网页抓取）**与 PRD.md §5 非目标冲突**——「网页信息提取排入第二版（v0.2）」，且 S2 场景（本地文件处理）只需前两项。因此 **W2 镜像按「前两项」定基础依赖（0 额外库）**，后三项不进 W2 镜像。
-2. 若你确认要把 PDF/Excel 纳入 v0.1，须先改 PRD 边界（新增需求走 backlog 决议），再重做依赖清单与镜像；这属于扩范围，我不擅自决定。
-3. W2 的 5 个基础工具按 DEVELOPMENT_PLAN.md 2.6 固定为：`file_read / dir_scan / script_run / report_write / log_record`——均落在「无额外依赖」区间，镜像可保持 < 500MB。
+### 硬约束：沙箱内禁止包管理操作（人类确认，2026-11-18）
+
+1. **禁止**：沙箱内执行 `pip install`、`apt` / `apt-get` / `yum` / `dnf` / `apk`、`npm install` 等任何包管理操作，一律 `DENIED_BY_RULE`，不询问用户、不允许放行。
+   - 实现落点：`src/sandbox/executor.py` 的 §3.5 规则已覆盖 `pip install / apt / yum / dnf / apk / npm install -g`；D1 执行器骨架须在 `check_command()` 中真正调用规则匹配，不能只留桩。
+   - 理由：保持沙箱纯净与安全，避免依赖冲突与恶意包注入。
+2. **替代方案**：任务若需特定库（如 PDF 解析），Agent 应通过 MCP 调用**外部已预装好环境的「专用 Skill 容器」或本地服务**，而不是在临时沙箱内安装。
+   - 该能力不在 v0.1 实现（专用 Skill 容器属扩展形态）；本约束先守住「沙箱内不装包」底线，不为装包开后门。相关需求进 PRD backlog。
+3. **构建期与运行期分离**：镜像构建期（Dockerfile 的 RUN）允许装基础运行时；运行期（容器内执行的任务脚本）禁止任何包管理，两者不得混淆——不能因构建期装过包就在运行期放开。
+
+**验收补强**：
+- 2.1 增加「容器内执行 `pip install requests` 返回 DENIED_BY_RULE §3.5」。
+- 2.4 增加「`python -c 'import pdfplumber'` 在沙箱内失败（证明无预装额外库）」。
+
+### D1 环境阻碍记录（2026-11-18）
+
+- 镜像构建在当前开发机**受阻**：Docker daemon（Windows 侧 29.8.1）可用，但无法连接 `registry-1.docker.io:443`（无 HTTPS 代理），且本地无 `python:3.11-slim` 基础镜像；git-bash/WSL 侧 daemon 亦不可达。
+- 处理：Dockerfile 与 `scripts/build_sandbox.sh` 已交付（脚本对网络失败给出明确排查提示）；**镜像实跑验证（非 root/体积/无包管理）移到网络可达环境执行**，不在本机伪造成功。
+- 不受影响：执行器骨架已用 mock docker CLI 完成 10 个单测（含 pip/apt 拒绝、超时 kill、创建即销毁、资源参数），全套 49 测试通过。镜像验收项在 W2 周报中标为「待环境」。
 
 ---
 

@@ -235,12 +235,14 @@ class SandboxExecutor:
 
         W2 实现可直接复用此方法，只需填充上述原子方法。
         """
+        from data.events import utc_now  # 延迟导入，避免包循环
         verdict, rule = self.check_command(request)
-        if verdict is Verdict.DENIED_BY_RULE:
-            from data.events import utc_now  # 延迟导入，避免包循环
+        if verdict in (Verdict.DENIED_BY_RULE, Verdict.NEED_CONFIRM):
+            # 两类都不建容器：DENIED 直接拒绝；NEED_CONFIRM 未确认不得放行。
             return ExecutionResult(
                 task_id=request.task_id, step_id=request.step_id, timestamp=utc_now(),
                 command=request.command, verdict=verdict, matched_rule=rule,
+                user_confirmed=request.user_confirmed,
             )
         container_id = self.create_container(request)
         try:
