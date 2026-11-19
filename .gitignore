@@ -22,6 +22,9 @@ build/
 *.sqlite3
 logs/*.jsonl
 
+# Agent 包导出产物（由 scripts/export_sample_package.py 可复现，不入库二进制）
+*.agentpkg
+
 # 凭据：密钥只存环境变量，绝不入库（SANDBOX_RULES.md §6 / PACKAGE_SPEC.md §7）
 .env
 *.key
