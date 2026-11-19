@@ -49,6 +49,7 @@ def parse_plan(raw: str, validator: Draft7Validator | None = None) -> dict[str, 
 
 # 真实云端（DeepSeek）A1' 实测：模型会用自由 tool 名（如 filesystem_scan/none）与数字 step_id。
 # 归一化在 Model 层完成，产物仍是固定 Schema 的合法 JSON；不放宽 Schema 本身。
+# W3 G1：本文件在 A1' 回归门禁触发路径内，改动须重跑合法性回归（见 W3-plan.md §1）。
 TOOL_ALIASES: dict[str, str] = {
     "filesystem_scan": "dir_scan", "list_directory": "dir_scan", "ls": "dir_scan",
     "read_file": "file_read", "cat": "file_read",
