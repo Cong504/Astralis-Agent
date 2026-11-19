@@ -108,6 +108,15 @@ W2 确实写了原则、也确实"当场修复"了，但**教训没有转化为�
 - 关闭判据逐条核对：CI 真跑（`reason=real A1' regression run`）✓ / 真实 Key（`key_present=true`）✓ / 真实 API 返回 + 退出码（`exit_code=0`，10 次 A1' 回归）✓ / 命中触发路径（`triggered=parser.py`）✓ / 非本地 mock ✓。
 - **结论：3.8 关闭，W3 正式收口（2026-11-19）。** 未达项仅 W2-C1/W2-R10（环境依赖，已在 W3-plan 带入项首行，不影响收口）。
 
+### 6.1 逐条 API 返回证据核对（W4 前置要求，2026-11-19）
+
+**核对结论**：`a1_gate.jsonl` 按门禁脚本设计就是**每次运行一条汇总行**（decision/reason/key/exit_code），不承载逐条 API 明细——这是正确的，不应把明细塞进去。
+
+- **逐条 10 次真实 API 返回**：在 `logs/bench_a1_legality.json`（`scripts/bench_a1_legality.py` 产出），samples=10，每条含 `raw`（原始 API 返回完整文本）、`prompt_tokens`/`completion_tokens`、`latency_sec`、`raw_valid`、`rewrites`、`degraded`、`steps`。可追溯路径：仓库内 `logs/bench_a1_legality.json`（已提交）+ 脚本 `scripts/bench_a1_legality.py`（可复跑）。
+- **本次 CI 真跑的明细缺口（如实记录）**：CI workflow 原 artifact 只上传 `logs/a1_gate.jsonl`，未上传 CI 环境生成的 `bench_a1_legality.json`；因此这次 CI 真跑的 10 条原始返回**不在下载到的 artifact 中**。仓库内已提交的 `bench_a1_legality.json` 是 W2 本地真实 API 跑的同类记录（口径一致、非 CI 那次），二者不可混同。
+- **已修复（系统级）**：`.github/workflows/a1-gate.yml` 的 `Upload gate record` 现同时上传 `logs/a1_gate.jsonl` 与 `logs/bench_a1_legality.json`，后续每次门禁真跑，汇总行与逐条明细一并入 artifact，证据链完整。
+- **W4 强制前置项**：见 `W4-plan.md` carry-over 清单；W2-C1/W2-R10 与本次 artifact 修复一并追踪。
+
 ---
 
 > 本复盘已由人类确认归档为 W3 交付物（2026-11-18）；2026-11-19 按约定补录 3.8 真实 CI 关闭证据，本周其他结论不变。

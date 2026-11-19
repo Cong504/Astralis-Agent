@@ -47,5 +47,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: a1-gate-record
-          path: logs/a1_gate.jsonl
+          path: |
+            logs/a1_gate.jsonl
+            logs/bench_a1_legality.json
           if-no-files-found: warn
