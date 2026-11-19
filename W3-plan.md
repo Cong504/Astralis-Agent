@@ -37,11 +37,21 @@
 - 3.3 确认契约先落地：`ApproveStage` 扩展 §4 步骤级确认，`needs_step_confirm()` 判定写入/删除/安装/high 风险；未确认 → NEED_CONFIRM 且不建容器；CLI 接 ask_step_confirm 真交互。8 个单测覆盖。
 - 3.8 门禁实现：`scripts/gate_a1_regression.py` + `.github/workflows/a1-gate.yml`；触发路径 4 个；无 Key 显式 SKIP + 待办 + 留痕 `logs/a1_gate.jsonl`；有 Key 真跑 A1' 并透传退出码卡合并。
 - 本地验证（**非门禁验收**）：无 Key + 命中触发路径 → 输出 SKIP 与原因，门禁记录含 todo，exit=0（不静默、不阻塞）。单测用 mock 屏蔽真 API 以免烧配额。
-- **验收状态：已就绪待 push（用户执行，2026-11-18）**。按铁律「真实 API + CI 生命周期必须实测」，本地逻辑就绪不算验收，CI 接线不冒充已验证。触发协议（钉死，防"想测怕烧→不测→永久挂"死循环）：
+- **验收状态：已关闭 PASS（2026-11-19，真实 CI）**。按铁律「真实 API + CI 生命周期必须实测」，本地逻辑就绪不算验收，CI 接线不冒充已验证。触发协议（钉死，防"想测怕烧→不测→永久挂"死循环）：
   1. **push main 由用户执行**，Agent 只标"已就绪待 push"，不写成自己已验证；
   2. push 前用户确认两件事：CI secrets 中 DeepSeek Key 已注入、同意这次真实调用成本（跑 10 次 A1'，约数千 token）；
   3. **关闭判据**：首次 push main 后 CI 真跑 + `logs/a1_gate.jsonl` 原始记录（真实 API 返回 + 退出码），本地 mock 永远不算验收。
   详见任务 3.8 的真实验证触发条件与威胁模型。
+
+**3.8 关闭证据（2026-11-19，GitHub Actions 真实运行）**：
+- 触发方式：用户确认 Key 已注入后，Agent 做最小非语义改动（`src/model/parser.py` 加一行注释），按用户授权 push 到 `origin/main`（commit `58285c7`，信息 `test(gate): trigger A1 gate with minimal parser change`），命中触发路径。
+- CI artifact 原始记录（`a1_gate.jsonl`）：
+  ```json
+  {"ts": "2026-11-19T02:41:22.251+00:00", "decision": "PASS", "reason": "real A1' regression run", "triggered": ["src/model/parser.py"], "key_present": true, "exit_code": 0}
+  ```
+- 判据逐条核对：① CI 真跑（`decision=PASS`、`reason=real A1' regression run`）✓；② 真实 Key（`key_present=true`）✓；③ 真实 API 返回 + 退出码（`exit_code=0`，10 次 A1' 回归通过，对应 `logs/bench_a1_legality.json` 口径）✓；④ 命中触发路径（`triggered=parser.py`）✓。
+- 对照：此前 2026-11-19T02:03:12 的那条是 `no relevant change` SKIP（`changed=[W3-retro.md]`、`key_present=false`），**不作为关闭证据**，仅证明 SKIP 分支在真实 CI 可用；本次 PASS 才是关闭依据。
+- **结论：3.8 关闭，W3 正式收口（2026-11-19）。**
 
 ---
 
@@ -83,7 +93,7 @@
 - 验收：
   - 改一次 PLANNING_PROMPT（测试性改动）能触发回归；无 Key 时明确 SKIP 原因；
   - **必须走完整确认交互链路（3.3 契约）**：回归测试不得绕过/桩掉确认步骤，A1' 判据中的「合规」包含「能被用户确认」——即生成的计划步骤须带正确确认标记且经 3.3 的确认契约流转；若回归测试绕过确认交互，门禁结果无效。
-- **真实验证触发条件（不得失踪）**：CI 接线属「真实 API + CI 生命周期」，本地 mock 只算逻辑就绪、不算验收。首次 push 到 main 分支时必须在真实 GitHub Actions 环境真跑一次门禁，附 `logs/a1_gate.jsonl` 原始记录（通过 CI artifact 上传）与结论；未真跑前 3.8 保持「部分通过」状态，不因本地 mock 绿而打勾关闭。
+- **真实验证触发条件（不得失踪）→ 已满足并关闭（2026-11-19）**：CI 接线属「真实 API + CI 生命周期」，本地 mock 只算逻辑就绪、不算验收。首次 push 到 main 分支时必须在真实 GitHub Actions 环境真跑一次门禁，附 `logs/a1_gate.jsonl` 原始记录（通过 CI artifact 上传）与结论；未真跑前 3.8 保持「部分通过」状态，不因本地 mock 绿而打勾关闭。**实测：2026-11-19T02:41:22 CI 真跑 PASS，原始记录见 §1 关闭证据。**
 - 依据：人类裁决 2026-11-18（3.8 依赖 3.3 确认契约，且排在安全地基之后）。
 
 #### 3.8 威胁模型（写死，防止将来误「修」出安全事故）
@@ -128,7 +138,7 @@
 - [x] 3.4 复盘固定三字段 + 至少 1 个真实可优化点 + rm -fr 链式缺口案例；reflect_failed 不破坏主流程（test_reflection.py）
 - [x] 3.5 记忆库结构化 + 标签检索（复用 SQLite，无向量库）；Runtime 自动沉淀（test_memory.py）
 - [x] 3.6 成本护栏：结构化告警（含超限维度）；用 A1' 真实 usage 样本验证正常/低阈值两路径，未新烧配额（verify_cost_guard.py）
-- [ ] 3.8 G1 门禁**已就绪待 push（用户执行）**：CI 配置 + 脚本已实现、本地无 Key SKIP 验证过；关闭条件=用户 push main 后 CI 真跑 + logs/a1_gate.jsonl 原始记录（真实 API 返回+退出码）。本地 mock 永不作验收。见威胁模型（fork SKIP 为有意取舍）
+- [x] 3.8 G1 门禁**已关闭 PASS（2026-11-19 真实 CI）**：CI 真跑 `real A1' regression run`，`key_present=true`、`exit_code=0`，触发 `parser.py`；原始记录见 §1；mock 与 SKIP 均未作验收。威胁模型保留（fork SKIP 为有意取舍）
 - [ ] W2-C1 / W2-R10：环境到位则执行，未到位则保留带入项
 
 ---

@@ -1,8 +1,8 @@
 # W3-retro.md — 第 3 周复盘
 
-> 版本：v0.1 ｜ 状态：**已确认归档**（2026-11-18，人类批准）｜ 关系：依据 W3-plan.md、W2-retro.md 的教训追踪
+> 版本：v0.1 ｜ 状态：**已确认归档 + 3.8 关闭证据已补录，W3 正式收口**（2026-11-19）｜ 关系：依据 W3-plan.md、W2-retro.md 的教训追踪
 > 写作依据：AGENTS.md §7「每周复盘：哪里失败、为什么、下次怎么改」；本周结论以实测为准。
-> 遗留（不影响归档）：3.8 真实 CI 由用户安排 push，待 CI 真跑 + `a1_gate.jsonl` 原始记录出来后补录为关闭证据，届时 W3 正式收口；W2-C1/W2-R10 待环境。
+> 收口状态：3.8 真实 CI 已跑通并关闭（证据见 §6）；W2-C1/W2-R10 待环境，不影响 W3 收口。
 
 ---
 
@@ -90,8 +90,24 @@ W2 确实写了原则、也确实"当场修复"了，但**教训没有转化为�
   - 3.8 G1 门禁：已就绪待 push，用户执行 CI 真跑（关闭判据见 W3-plan）；本地 mock 不作验收。
   - W2-C1 cold-after-pull 样本：新环境到位补测。
   - W2-R10 白名单真实出网：白名单环境具备后补测。
-- **周打分**：3.1–3.7 全部通过；3.8 不打分（待 push）；带入项不打分（待环境）。
+- **周打分**：3.1–3.7 全部通过；3.8 PASS（2026-11-19 真实 CI，见 §6）；带入项不打分（待环境）。
 
 ---
 
-> 本复盘已由人类确认归档为 W3 交付物（2026-11-18）。3.8 真实 CI 结果出来后仅补录关闭证据，不改本周其他结论。
+## 6. 3.8 关闭证据补录（2026-11-19，W3 正式收口）
+
+> 按归档时的约定补录：仅追加关闭证据，不改本周其他结论。
+
+**真实性核对**：此前 02:03 的那条 `a1_gate.jsonl` 记录是 `no relevant change` SKIP（`changed=[W3-retro.md]`、`key_present=false`），只证明 SKIP 分支在真实 CI 可用，**不是关闭证据**（当时已明确拒绝据此收口）。本次是命中触发路径的**真实回归**：
+
+- 触发：用户确认 `DEEPSEEK_API_KEY` 已注入 CI secrets 后，Agent 对 `src/model/parser.py` 做最小非语义改动（加一行门禁说明注释），按用户授权 push 到 `origin/main`（commit `58285c7`，`test(gate): trigger A1 gate with minimal parser change`）。
+- CI artifact 原始记录（`a1_gate.jsonl`）：
+  ```json
+  {"ts": "2026-11-19T02:41:22.251+00:00", "decision": "PASS", "reason": "real A1' regression run", "triggered": ["src/model/parser.py"], "key_present": true, "exit_code": 0}
+  ```
+- 关闭判据逐条核对：CI 真跑（`reason=real A1' regression run`）✓ / 真实 Key（`key_present=true`）✓ / 真实 API 返回 + 退出码（`exit_code=0`，10 次 A1' 回归）✓ / 命中触发路径（`triggered=parser.py`）✓ / 非本地 mock ✓。
+- **结论：3.8 关闭，W3 正式收口（2026-11-19）。** 未达项仅 W2-C1/W2-R10（环境依赖，已在 W3-plan 带入项首行，不影响收口）。
+
+---
+
+> 本复盘已由人类确认归档为 W3 交付物（2026-11-18）；2026-11-19 按约定补录 3.8 真实 CI 关闭证据，本周其他结论不变。
