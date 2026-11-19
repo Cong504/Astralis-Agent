@@ -48,6 +48,7 @@
 
 ### 4.2 实现包恢复与加载 ｜ D2–D3 ｜ A｜H 验收
 - 做什么：写 `src/package/importer.py`，按 PACKAGE_SPEC.md §11 流程：校验扩展名/zip → spec_version 与 min_runtime → 重算 hash 比对 → 重算 permissions_digest → 权限取交集 → 加载注册 → 记恢复事件。四种拒绝情况打印明确原因。
+- **往返契约（哈希 exclusion 集合，2026-11-19 三方对齐）**：4.1 导出与 4.2 导入必须共用 `src/package/exporter.py::HASH_EXCLUDED = {manifest.json, signature.json}`。权威定义见 `PACKAGE_SPEC.md §3` 澄清条（manifest 含 hash.value 自身，必须一并排除，否则自引用无解）。importer **不得**自行定义排除集合；重算 hash 时直接 import 该常量，口径分裂即判实现缺陷。
 - 验收（S2 同任务对比，固化流程防"看起来跑通"）：
   - **输入固化**：S2 场景固定输入 = 一个含已知文件的目录（如 `notes.txt`/`data.csv`/`sub/deep.md`），任务描述「扫描目录并生成 Markdown 报告」，与 `scripts/run_s2_smoke.py` 同构。
   - **期望固化**：报告含全部输入文件名；状态 DONE；导出前的执行轨迹（plan/动作/usage/denials/复盘）落盘 `logs/s2_before_export.json` 作为基线。

@@ -55,6 +55,7 @@ agent-package/
 字段规则：
 - `version` 用语义化版本（MAJOR.MINOR.PATCH）；**MAJOR 递增代表包结构不向后兼容**
 - `hash.value` 计算时排除 `signature.json` 自身（避免自引用）
+- **权威定义澄清（2026-11-19，W4 三方对齐）**：排除集合 = `manifest.json` + `signature.json`。原因——`manifest.json` 内含 `hash.value` 自身，若计入聚合哈希即无限自引用，技术上无解；故"除 signature.json 外全部文件"的准确实现是"除 manifest.json 与 signature.json 外全部文件"。**4.1 导出与 4.2 导入必须用同一排除集合**（代码常量 `src/package/exporter.py::HASH_EXCLUDED`），否则往返重算必然不一致。
 - `min_runtime` 必填：恢复时运行时版本低于此值 → 拒绝加载并说明原因
 - `spec_version` 与运行时支持的版本不匹配 → 拒绝加载
 

@@ -18,9 +18,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 SPEC_VERSION = "0.1"
 MIN_RUNTIME = "0.1.0"
 ALLOWED_TOOLS = ("dir_scan", "file_read", "script_run", "report_write", "log_record")
+
+# 聚合哈希排除集合（往返契约：4.1 export 与 4.2 import 必须用同一集合）。
+# PACKAGE_SPEC.md §3/§10 字面只排除 signature.json；但 manifest.json 内含 hash.value 自身，
+# 若计入则自引用无解。故权威定义 = 排除 manifest.json + signature.json，已回写 spec 澄清。
+HASH_EXCLUDED = frozenset({"manifest.json", "signature.json"})
 
 
 class PackageExportError(ValueError):
@@ -55,10 +62,9 @@ def compute_permissions_digest(tools: dict[str, Any]) -> str:
     return f"sha256:{_sha256_text(_canon(perms))}"
 
 
-def compute_aggregate_hash(build_dir: Path) -> str:
-    """对除 manifest.json / signature.json 外全部文件，按相对路径排序聚合 sha256。"""
+def compute_aggregate_hash(build_dir: Path, excluded: frozenset[str] = HASH_EXCLUDED) -> str:
+    """对排除集合外的全部文件，按相对路径排序聚合 sha256（4.1/4.2 共用同一 excluded）。"""
     h = hashlib.sha256()
-    excluded = {"manifest.json", "signature.json"}
     files = sorted(
         (p for p in build_dir.rglob("*") if p.is_file() and p.relative_to(build_dir).as_posix() not in excluded),
         key=lambda p: p.relative_to(build_dir).as_posix(),
@@ -72,10 +78,34 @@ def compute_aggregate_hash(build_dir: Path) -> str:
     return h.hexdigest()
 
 
+def _as_bool(value: Any) -> bool:
+    """把 yaml 解析出的布尔/字符串统一为 bool（兼容 true/True/yes/on/1 及带引号写法）。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    if isinstance(value, (int, float)):
+        return value != 0
+    return False
+
+
 def validate_structure(tools: dict[str, Any], skills: dict[str, str]) -> None:
-    """结构校验（PACKAGE_SPEC §10 step5）：JSON 字段、risk_level 与 requires_confirm 一致。"""
+    """结构校验（PACKAGE_SPEC §10 step5）：JSON 字段、risk_level 与 requires_confirm 一致。
+
+    用 yaml.safe_load 解析后按布尔/枚举判断，不做子串匹配——
+    避免 True/yes/紧凑写法被误拒、带引号写法被误放（人类裁决 2026-11-19）。
+    """
     for skill_name, yaml_text in skills.items():
-        if "risk_level: high" in yaml_text and "requires_confirm: true" not in yaml_text:
+        try:
+            data = yaml.safe_load(yaml_text) or {}
+        except yaml.YAMLError as exc:
+            raise PackageExportError(f"结构校验失败：skill {skill_name} YAML 解析错误: {exc}") from exc
+        if not isinstance(data, dict):
+            raise PackageExportError(f"结构校验失败：skill {skill_name} YAML 顶层必须是对象")
+        risk = str(data.get("risk_level", "")).strip().lower()
+        if risk not in ("low", "medium", "high"):
+            raise PackageExportError(f"结构校验失败：skill {skill_name} risk_level 非法: {risk}")
+        if risk == "high" and not _as_bool(data.get("requires_confirm")):
             raise PackageExportError(
                 f"结构校验失败：skill {skill_name} risk_level=high 但 requires_confirm 非 true（PACKAGE_SPEC §5）"
             )

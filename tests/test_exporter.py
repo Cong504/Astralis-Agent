@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from package.exporter import (  # noqa: E402
-    AgentSpec, PackageExportError, compute_aggregate_hash,
+    HASH_EXCLUDED, AgentSpec, PackageExportError, compute_aggregate_hash,
     compute_permissions_digest, export_package,
 )
 
@@ -79,11 +79,46 @@ def test_high_risk_skill_without_confirm_rejected(tmp_path):
         export_package(bad, tmp_path)
 
 
+@pytest.mark.parametrize("confirm_line", [
+    "requires_confirm: true", "requires_confirm: True", "requires_confirm: yes",
+    "requires_confirm: 'true'", 'requires_confirm: "true"', "requires_confirm: 1",
+])
+def test_high_risk_confirm_variants_accepted(tmp_path, confirm_line):
+    """yaml.safe_load 正确识别各种布尔/枚举写法，不再子串误拒（人类裁决 2026-11-19）。"""
+    ok = _spec(skills={"danger": f"name: danger\nrisk_level: high\n{confirm_line}\n"})
+    pkg = export_package(ok, tmp_path)
+    assert pkg.exists()
+
+
+def test_high_risk_confirm_false_rejected(tmp_path):
+    bad = _spec(skills={"danger": "name: danger\nrisk_level: high\nrequires_confirm: false\n"})
+    with pytest.raises(PackageExportError, match="requires_confirm"):
+        export_package(bad, tmp_path)
+
+
+def test_malformed_yaml_rejected(tmp_path):
+    """冒号后无空格（requires_confirm:true）非合法 YAML，应明确拒绝而非静默放行。"""
+    bad = _spec(skills={"danger": "name: danger\nrisk_level: high\nrequires_confirm:true\n"})
+    with pytest.raises(PackageExportError, match="YAML 解析错误"):
+        export_package(bad, tmp_path)
+
+
+def test_invalid_risk_level_rejected(tmp_path):
+    bad = _spec(skills={"s": "name: s\nrisk_level: critical\nrequires_confirm: true\n"})
+    with pytest.raises(PackageExportError, match="risk_level 非法"):
+        export_package(bad, tmp_path)
+
+
 def test_non_allowlisted_tool_rejected(tmp_path):
     tools = json.loads(json.dumps(TOOLS))
     tools["tools"] = [{"name": "evil_tool", "source": "builtin"}]
     with pytest.raises(PackageExportError, match="白名单"):
         export_package(_spec(tools=tools), tmp_path)
+
+
+def test_hash_excluded_is_shared_contract():
+    """4.1/4.2 往返契约：权威 exclusion 集合为 manifest+signature（PACKAGE_SPEC §3 澄清）。"""
+    assert HASH_EXCLUDED == frozenset({"manifest.json", "signature.json"})
 
 
 def test_aggregate_hash_excludes_self_references(tmp_path):
